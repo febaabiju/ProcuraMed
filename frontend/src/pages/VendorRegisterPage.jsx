@@ -88,6 +88,11 @@ const VendorRegisterPage = () => {
       return;
     }
 
+    if (!data.certificate_file || !data.certificate_file[0]) {
+      setApiError('Please upload your Business License / Registration Certificate.');
+      return;
+    }
+
     const formData = new FormData();
     formData.append('company_name', data.company_name);
     formData.append('contact_person', data.contact_person);
@@ -372,19 +377,24 @@ const VendorRegisterPage = () => {
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                    Business License / Registration Certificate Upload
+                    Business License / Registration Certificate Upload <span className="text-rose-500">*</span>
                   </label>
-                  <div className="relative border-2 border-dashed border-violet-200 hover:border-violet-400 rounded-2xl p-4 text-center bg-violet-50/20 hover:bg-violet-50/50 transition-colors">
+                  <div className={`relative border-2 border-dashed ${errors.certificate_file ? 'border-rose-300 bg-rose-50/20' : 'border-violet-200 hover:border-violet-400 bg-violet-50/20 hover:bg-violet-50/50'} rounded-2xl p-4 text-center transition-colors`}>
                     <input
                       type="file"
                       accept=".pdf,.jpg,.jpeg,.png"
                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                      {...register('certificate_file')}
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          setFileName(e.target.files[0].name);
+                      {...register('certificate_file', {
+                        required: 'Business License / Registration Certificate is required',
+                        validate: (files) => (files && files.length > 0) || 'Business License / Registration Certificate is required',
+                        onChange: (e) => {
+                          if (e.target.files && e.target.files[0]) {
+                            setFileName(e.target.files[0].name);
+                          } else {
+                            setFileName('');
+                          }
                         }
-                      }}
+                      })}
                     />
                     <div className="flex flex-col items-center gap-1.5 pointer-events-none">
                       <IconUpload className="w-6 h-6 text-violet-600" />
@@ -394,6 +404,9 @@ const VendorRegisterPage = () => {
                       <p className="text-[10px] text-slate-400">PDF, PNG, JPG up to 10MB</p>
                     </div>
                   </div>
+                  {errors.certificate_file && (
+                    <p className="mt-1 text-xs text-rose-500 font-medium">{errors.certificate_file.message}</p>
+                  )}
                 </div>
               </div>
 
