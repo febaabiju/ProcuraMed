@@ -1,0 +1,26 @@
+from rest_framework import serializers
+
+
+class DashboardStatsSerializer(serializers.Serializer):
+    total_users = serializers.IntegerField()
+    total_internal_users = serializers.IntegerField()
+    active_internal_users = serializers.IntegerField()
+    total_vendors = serializers.IntegerField()
+    pending_vendor_applications = serializers.IntegerField()
+    approved_vendors = serializers.IntegerField()
+    rejected_vendor_applications = serializers.IntegerField()
+    total_requisitions = serializers.IntegerField()
+    pending_approvals = serializers.IntegerField()
+    total_purchase_orders = serializers.IntegerField()
+    pending_deliveries = serializers.IntegerField()
+    current_inventory_count = serializers.IntegerField()
+    low_stock_items_count = serializers.IntegerField()
+    pending_payments = serializers.IntegerField()
+    total_payments_amount = serializers.DecimalField(max_digits=15, decimal_places=2)
+    monthly_procurement_amount = serializers.DecimalField(max_digits=15, decimal_places=2)
+    role_counts = serializers.ListField()
+    vendor_application_counts = serializers.DictField()
+    top_vendors = serializers.ListField()
+    department_procurement = serializers.ListField()
+    monthly_charts = serializers.ListField()
+    recent_activities = serializers.ListField()
