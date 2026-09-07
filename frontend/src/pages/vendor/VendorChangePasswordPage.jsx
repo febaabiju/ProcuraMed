@@ -53,7 +53,7 @@ const VendorChangePasswordPage = () => {
 
       setSuccess('Password updated successfully! Entering Vendor Dashboard...');
       setTimeout(() => {
-        navigate('/vendor/dashboard');
+        navigate('/vendor/dashboard', { replace: true });
       }, 1000);
     } catch (err) {
       const errMsg = err.response?.data?.error || err.response?.data?.detail || 'Failed to update password. Please try again.';

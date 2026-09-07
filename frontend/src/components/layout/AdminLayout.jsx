@@ -37,7 +37,7 @@ const AdminLayout = ({ children, title = 'System Administrator Portal', subtitle
   const handleConfirmLogout = () => {
     logout();
     setShowLogoutModal(false);
-    navigate('/login');
+    navigate('/login', { replace: true });
   };
 
   const adminName = user?.full_name || user?.first_name || user?.username || 'Admin';

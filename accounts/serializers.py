@@ -89,6 +89,12 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
+        username = attrs.get(self.username_field)
+        if username and '@' in username:
+            user_by_email = User.objects.filter(email__iexact=username).first()
+            if user_by_email:
+                attrs[self.username_field] = user_by_email.username
+
         data = super().validate(attrs)
         
         is_vendor = bool(self.user.role and self.user.role.name.lower() == 'vendor')
@@ -119,5 +125,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'department_id': self.user.department.id if self.user.department else None,
             'first_login': self.user.first_login,
             'is_vendor': is_vendor,
+            'is_staff': self.user.is_staff,
+            'is_superuser': self.user.is_superuser,
         }
         return data

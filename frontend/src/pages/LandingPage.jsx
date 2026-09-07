@@ -1,4 +1,6 @@
 import React from 'react';
+import { Navigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import Navbar from '../components/layout/Navbar';
 import Footer from '../components/layout/Footer';
 import Hero from '../components/landing/Hero';
@@ -9,6 +11,17 @@ import WhySection from '../components/landing/WhySection';
 import CtaBanner from '../components/landing/CtaBanner';
 
 const LandingPage = () => {
+  const { isAuthenticated, isAdmin, isVendor, user } = useAuth();
+
+  // If an authenticated admin navigates to the home/landing route, automatically redirect to Admin Dashboard
+  if (isAuthenticated && isAdmin) {
+    return <Navigate to="/admin/dashboard" replace />;
+  }
+
+  // If an authenticated vendor navigates to the home/landing route, automatically redirect to Vendor Dashboard
+  if (isAuthenticated && isVendor) {
+    return <Navigate to={user?.first_login ? "/vendor/change-password" : "/vendor/dashboard"} replace />;
+  }
   return (
     <div className="min-h-screen flex flex-col" style={{ background: '#F8F8FC' }}>
       <Navbar />

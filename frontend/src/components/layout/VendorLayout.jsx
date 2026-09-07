@@ -38,7 +38,7 @@ const VendorLayout = ({
   const handleConfirmLogout = () => {
     logout();
     setShowLogoutModal(false);
-    navigate('/login');
+    navigate('/login', { replace: true });
   };
 
   const displayName = companyName || user?.first_name || user?.username || 'Vendor Partner';

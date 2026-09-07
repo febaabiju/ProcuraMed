@@ -57,12 +57,23 @@ const AdminDashboardPage = () => {
 
   useEffect(() => {
     fetchStats();
+
+    // Prevent browser "Go Back" from exiting authenticated admin session to public pages
+    window.history.pushState(null, '', window.location.href);
+    const handlePopState = () => {
+      window.history.pushState(null, '', window.location.href);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
   }, []);
 
   const handleConfirmLogout = () => {
     logout();
     setShowLogoutModal(false);
-    navigate('/login');
+    navigate('/login', { replace: true });
   };
 
   const adminName = user?.full_name || user?.first_name || user?.username || 'Admin';

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, Navigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import axiosClient from '../api/axiosClient';
@@ -22,7 +22,7 @@ import Button from '../components/common/Button';
 
 const LoginPage = () => {
   const { register, handleSubmit, formState: { errors } } = useForm();
-  const { login, loading } = useAuth();
+  const { login, loading, isAuthenticated, isAdmin, isVendor, user } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [apiError, setApiError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -36,6 +36,16 @@ const LoginPage = () => {
   const [forgotError, setForgotError] = useState('');
 
   const navigate = useNavigate();
+
+  // If already authenticated, automatically redirect to appropriate dashboard
+  if (isAuthenticated) {
+    if (isAdmin) {
+      return <Navigate to="/admin/dashboard" replace />;
+    }
+    if (isVendor) {
+      return <Navigate to={user?.first_login ? "/vendor/change-password" : "/vendor/dashboard"} replace />;
+    }
+  }
 
   const onSubmit = async (data) => {
     setApiError('');
@@ -91,12 +101,12 @@ const LoginPage = () => {
 
       setTimeout(() => {
         if (isAdminUser) {
-          navigate('/admin/dashboard');
+          navigate('/admin/dashboard', { replace: true });
         } else if (isVendorUser) {
           if (userData?.first_login) {
-            navigate('/vendor/change-password');
+            navigate('/vendor/change-password', { replace: true });
           } else {
-            navigate('/vendor/dashboard');
+            navigate('/vendor/dashboard', { replace: true });
           }
         } else if (isStaffUser) {
           navigate('/staff/dashboard');
@@ -228,7 +238,7 @@ const LoginPage = () => {
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <InputField
             label="Username or Email"
-            placeholder="admin / proc_officer / vendor_username"
+            placeholder="Enter username or email"
             icon={HiUser}
             required
             error={errors.username?.message}

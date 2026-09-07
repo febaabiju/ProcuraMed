@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import axiosClient from '../api/axiosClient';
@@ -38,7 +38,17 @@ const DEFAULT_CATEGORIES = [
 
 const VendorRegisterPage = () => {
   const { register, handleSubmit, formState: { errors } } = useForm();
-  const { submitVendorApplication, loading } = useAuth();
+  const { submitVendorApplication, loading, isAuthenticated, isAdmin, isVendor, user } = useAuth();
+
+  // If already authenticated, automatically redirect to appropriate dashboard
+  if (isAuthenticated) {
+    if (isAdmin) {
+      return <Navigate to="/admin/dashboard" replace />;
+    }
+    if (isVendor) {
+      return <Navigate to={user?.first_login ? "/vendor/change-password" : "/vendor/dashboard"} replace />;
+    }
+  }
   const [apiError, setApiError] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [applicationData, setApplicationData] = useState(null);

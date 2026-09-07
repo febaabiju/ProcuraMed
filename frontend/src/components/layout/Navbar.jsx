@@ -7,7 +7,7 @@ import ProcuraMedLogo from '../common/ProcuraMedLogo';
 
 const Navbar = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { user, isAuthenticated, isAdmin, logout } = useAuth();
+  const { user, isAuthenticated, isAdmin, isVendor, logout } = useAuth();
 
   return (
     <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-violet-100/80 shadow-sm shadow-violet-100/50">
@@ -16,7 +16,7 @@ const Navbar = () => {
 
           {/* Logo (Far Left) */}
           <div className="flex-1 flex justify-start items-center">
-            <Link to="/" className="flex items-center gap-2.5 group">
+            <Link to={isAdmin ? "/admin/dashboard" : isVendor ? "/vendor/dashboard" : "/"} className="flex items-center gap-2.5 group">
               <ProcuraMedLogo size={36} variant="color" className="group-hover:scale-105 transition-transform duration-200" />
               <span className="text-xl font-bold tracking-tight" style={{ color: '#8B7CF8' }}>
                 ProcuraMed
@@ -37,6 +37,12 @@ const Navbar = () => {
                 <Link to="/admin/users"               className="hover:text-violet-600 transition-colors flex items-center gap-1"><HiUsers className="w-4 h-4" /> Staff</Link>
                 <Link to="/admin/vendor-applications" className="hover:text-violet-600 transition-colors flex items-center gap-1"><HiClipboardList className="w-4 h-4" /> Applications</Link>
                 <Link to="/admin/vendors"             className="hover:text-violet-600 transition-colors flex items-center gap-1"><HiOfficeBuilding className="w-4 h-4" /> Vendors</Link>
+              </div>
+            )}
+
+            {isVendor && (
+              <div className="flex items-center gap-4 pl-4 border-l border-violet-100">
+                <Link to="/vendor/dashboard" className="hover:text-violet-600 transition-colors flex items-center gap-1"><HiHome className="w-4 h-4" /> Vendor Portal</Link>
               </div>
             )}
           </nav>

@@ -85,6 +85,17 @@ const VendorDashboardPage = () => {
 
   useEffect(() => {
     fetchDashboardData();
+
+    // Prevent browser "Go Back" from exiting authenticated vendor session to public pages
+    window.history.pushState(null, '', window.location.href);
+    const handlePopState = () => {
+      window.history.pushState(null, '', window.location.href);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
   }, []);
 
   const vendorName = data.vendor?.company_name || 'Vendor Partner';
