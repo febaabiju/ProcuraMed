@@ -97,7 +97,7 @@ class Command(BaseCommand):
             username='admin',
             defaults={
                 'employee_id': 'EMP-ADM-001',
-                'email': 'admin@procuramed.hospital',
+                'email': 'procuramed2026@gmail.com',
                 'first_name': 'System',
                 'last_name': 'Administrator',
                 'role': role_objs['System Administrator'],
@@ -116,6 +116,7 @@ class Command(BaseCommand):
         else:
             admin_user.role = role_objs['System Administrator']
             admin_user.employee_id = 'EMP-ADM-001'
+            admin_user.email = 'procuramed2026@gmail.com'
             admin_user.is_staff = True
             admin_user.is_superuser = True
             admin_user.save()

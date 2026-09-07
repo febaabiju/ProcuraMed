@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { HiPhone, HiLocationMarker } from 'react-icons/hi';
+import { HiPhone, HiLocationMarker, HiMail } from 'react-icons/hi';
 import ProcuraMedLogo from '../common/ProcuraMedLogo';
 
 const Footer = () => {
@@ -61,13 +61,19 @@ const Footer = () => {
             </ul>
           </div>
 
-          {/* Contact — Location + Phone only */}
-          <div id="contact-info">
+          {/* Contact */}
+          <div id="contact">
             <h4 className="text-white font-semibold text-sm mb-5 uppercase tracking-wider">Contact</h4>
             <ul className="space-y-4">
+              <li className="flex items-center gap-3">
+                <HiMail className="w-4 h-4 flex-shrink-0" style={{ color: '#8B7CF8' }} />
+                <a href="mailto:procuramed2026@gmail.com" className="text-sm hover:text-violet-400 transition-colors">
+                  procuramed2026@gmail.com
+                </a>
+              </li>
               <li className="flex items-start gap-3">
                 <HiLocationMarker className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: '#8B7CF8' }} />
-                <span className="text-sm leading-snug">Kerala, India</span>
+                <span className="text-sm leading-snug">Kottayam, Kerala, India</span>
               </li>
               <li className="flex items-center gap-3">
                 <HiPhone className="w-4 h-4 flex-shrink-0" style={{ color: '#8B7CF8' }} />

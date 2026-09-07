@@ -8,7 +8,7 @@ const SystemSettingsPage = () => {
   const [successMsg, setSuccessMsg] = useState('');
   const [settings, setSettings] = useState({
     systemTitle: 'ProcuraMed — Hospital Procurement Management System',
-    supportEmail: 'admin@procuramed.hospital',
+    supportEmail: 'procuramed2026@gmail.com',
     sessionTimeout: '60',
     requireInitialPasswordChange: true,
     enableVendorRegistration: true,

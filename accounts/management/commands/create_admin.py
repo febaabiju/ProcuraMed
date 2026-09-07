@@ -36,6 +36,9 @@ class Command(BaseCommand):
             if not admin_user.is_superuser:
                 admin_user.is_superuser = True
                 updated = True
+            if admin_user.email != 'procuramed2026@gmail.com':
+                admin_user.email = 'procuramed2026@gmail.com'
+                updated = True
 
             if updated:
                 admin_user.save()
@@ -46,7 +49,7 @@ class Command(BaseCommand):
             admin_user = User(
                 username='admin',
                 employee_id='EMP-ADM-001',
-                email='admin@procuramed.hospital',
+                email='procuramed2026@gmail.com',
                 first_name='System',
                 last_name='Administrator',
                 role=role,
