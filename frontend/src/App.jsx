@@ -9,6 +9,7 @@ import ProcurementCommitteeProtectedRoute from './components/common/ProcurementC
 import TechnicalOfficerProtectedRoute from './components/common/TechnicalOfficerProtectedRoute';
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import VendorRegisterPage from './pages/VendorRegisterPage';
 import AdminDashboardPage from './pages/admin/AdminDashboardPage';
 import UserManagementPage from './pages/admin/UserManagementPage';
@@ -42,6 +43,7 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/vendor-register" element={<VendorRegisterPage />} />
           <Route path="/register" element={<Navigate to="/vendor-register" replace />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
           
           {/* Technical Officer Protected Routes */}
           <Route

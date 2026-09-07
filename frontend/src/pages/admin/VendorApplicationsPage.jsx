@@ -34,6 +34,7 @@ const VendorApplicationsPage = () => {
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [approveModalOpen, setApproveModalOpen] = useState(false);
   const [adminRemarks, setAdminRemarks] = useState('');
+  const [rejectError, setRejectError] = useState('');
   
   // Credentials state for approval
   const [assignUsername, setAssignUsername] = useState('');
@@ -143,30 +144,29 @@ const VendorApplicationsPage = () => {
   const handleReject = async () => {
     if (!selectedApp) return;
     if (!adminRemarks.trim()) {
-      setActionError('Please provide admin remarks explaining the reason for rejection.');
+      setRejectError('Please provide admin remarks explaining the reason for rejection.');
       return;
     }
 
     setReviewing(true);
-    setActionError('');
-    setActionSuccess('');
+    setRejectError('');
 
     try {
       await axiosClient.post(`/vendors/applications/${selectedApp.id}/reject/`, {
         admin_remarks: adminRemarks,
       });
 
-      setActionSuccess(`Vendor application for "${selectedApp.company_name}" has been rejected.`);
       setReviewModalOpen(false);
+      setRejectError('');
       fetchApplications();
     } catch (err) {
       const errData = err.response?.data;
       if (errData) {
-        if (typeof errData === 'string') setActionError(errData);
-        else if (errData.error) setActionError(errData.error);
-        else setActionError(Object.values(errData).flat().join(' '));
+        if (typeof errData === 'string') setRejectError(errData);
+        else if (errData.error) setRejectError(errData.error);
+        else setRejectError(Object.values(errData).flat().join(' '));
       } else {
-        setActionError('Failed to reject vendor application.');
+        setRejectError('Failed to reject vendor application.');
       }
     } finally {
       setReviewing(false);
@@ -195,8 +195,8 @@ const VendorApplicationsPage = () => {
     
     setAssignUsername(suggestedUsername);
     setAssignPassword('');
-    setAssignConfirmPassword('');
     setActionError('');
+    setRejectError('');
     setReviewModalOpen(true);
 
     // Fetch freshest application data from backend
@@ -372,7 +372,7 @@ const VendorApplicationsPage = () => {
         </div>
 
         {/* Notifications */}
-        {actionSuccess && (
+        {actionSuccess && !actionSuccess.toLowerCase().includes('reject') && (
           <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center justify-between shadow-xs">
             <div className="flex items-center gap-2.5">
               <HiCheckCircle className="w-5 h-5 text-emerald-600 flex-shrink-0" />
@@ -384,7 +384,7 @@ const VendorApplicationsPage = () => {
           </div>
         )}
 
-        {actionError && (
+        {actionError && !actionError.toLowerCase().includes('reject') && (
           <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-center justify-between shadow-xs">
             <div className="flex items-center gap-2.5">
               <HiXCircle className="w-5 h-5 text-rose-600 flex-shrink-0" />
@@ -594,7 +594,10 @@ const VendorApplicationsPage = () => {
                 </div>
               </div>
               <button
-                onClick={() => setReviewModalOpen(false)}
+                onClick={() => {
+                  setReviewModalOpen(false);
+                  setRejectError('');
+                }}
                 className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
               >
                 <HiX className="w-5 h-5" />
@@ -798,10 +801,23 @@ const VendorApplicationsPage = () => {
                   <textarea
                     rows={2}
                     value={adminRemarks}
-                    onChange={(e) => setAdminRemarks(e.target.value)}
+                    onChange={(e) => {
+                      setAdminRemarks(e.target.value);
+                      if (rejectError) setRejectError('');
+                    }}
                     placeholder="Add approval justification or review notes..."
-                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 text-slate-800 font-medium"
+                    className={`w-full p-3 bg-slate-50 border rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-2 text-slate-800 font-medium transition-colors ${
+                      rejectError
+                        ? 'border-rose-300 focus:ring-rose-500/20'
+                        : 'border-slate-200 focus:ring-violet-500/20'
+                    }`}
                   />
+                  {rejectError && (
+                    <div className="mt-2 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-2">
+                      <HiXCircle className="w-4 h-4 flex-shrink-0 text-rose-600" />
+                      <span>{rejectError}</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-end gap-3 pt-2">

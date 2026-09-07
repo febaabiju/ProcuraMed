@@ -143,11 +143,14 @@ const LoginPage = () => {
       });
       setForgotResultMsg(
         res.data.message ||
-        'Password reset request submitted successfully. Please contact the system administrator to reset your password.'
+        `A secure password reset link has been sent to your registered email address. Please check your inbox.`
       );
     } catch (err) {
-      // In case of unexpected network failure
-      setForgotResultMsg('Password reset request submitted successfully. Please contact the system administrator to reset your password.');
+      const errMsg =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        'Failed to process password reset. Please check your credentials and try again.';
+      setForgotError(errMsg);
     } finally {
       setForgotLoading(false);
     }
@@ -325,7 +328,7 @@ const LoginPage = () => {
                   </div>
                   <div>
                     <h3 className="text-base font-extrabold text-slate-900">Forgot Password</h3>
-                    <p className="text-xs text-slate-500">Submit a password reset request</p>
+                    <p className="text-xs text-slate-500">Reset your vendor password via secure email link</p>
                   </div>
                 </div>
                 <button
@@ -341,18 +344,19 @@ const LoginPage = () => {
                   <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs space-y-2">
                     <p className="font-bold flex items-center gap-1.5 text-emerald-800">
                       <HiCheckCircle className="w-5 h-5 text-emerald-600 flex-shrink-0" />
-                      <span>Request Submitted</span>
+                      <span>Reset Link Sent</span>
                     </p>
                     <p className="leading-relaxed font-medium">
                       {forgotResultMsg}
                     </p>
                   </div>
 
-                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-[11px] text-slate-500 space-y-1">
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-[11px] text-slate-500 space-y-1.5">
                     <p className="font-semibold text-slate-700">Next Steps:</p>
-                    <p>1. The Hospital System Administrator will verify your vendor account status.</p>
-                    <p>2. A secure temporary password will be generated for your account.</p>
-                    <p>3. You will be required to change your password upon your next login.</p>
+                    <p>1. Open your inbox and look for an email from <strong>procuramed2026@gmail.com</strong>.</p>
+                    <p>2. Click the secure <strong>Reset Password</strong> link inside the email within 30 minutes.</p>
+                    <p>3. Enter your new password and submit to update your account.</p>
+                    <p>4. Return to this page to sign in with your new password.</p>
                   </div>
 
                   <div className="flex justify-end pt-1">
@@ -371,7 +375,7 @@ const LoginPage = () => {
               ) : (
                 <form onSubmit={handleForgotPasswordSubmit} className="space-y-4 text-xs">
                   <p className="text-slate-600 leading-relaxed text-[11px]">
-                    Enter your username and registered business email address to submit a password reset request to the ProcuraMed system administrator.
+                    Enter your username and registered business email address. If verified, we will send a secure password reset link to your email.
                   </p>
 
                   {forgotError && (
@@ -412,7 +416,7 @@ const LoginPage = () => {
                   <div className="p-3 bg-violet-50/70 rounded-xl border border-violet-100 flex items-start gap-2 text-violet-900 text-[11px]">
                     <HiShieldCheck className="w-4 h-4 text-violet-600 flex-shrink-0 mt-0.5" />
                     <span>
-                      Vendor password resets are securely managed by the system administrator to maintain strict procurement governance.
+                      A single-use password reset link will be sent to your registered email address. The link will expire in 30 minutes.
                     </span>
                   </div>
 
@@ -434,7 +438,7 @@ const LoginPage = () => {
                       className="font-bold text-white shadow-md shadow-violet-500/20"
                       style={{ background: 'linear-gradient(135deg, #A78BFA, #7C5FF0)' }}
                     >
-                      Submit Request
+                      Send Reset Link
                     </Button>
                   </div>
                 </form>

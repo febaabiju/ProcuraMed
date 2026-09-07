@@ -15,6 +15,7 @@ from .serializers import (
     VendorSerializer
 )
 from .filters import VendorApplicationFilter, VendorFilter
+from .emails import send_vendor_approval_email, send_vendor_rejection_email
 from accounts.models import Role
 from accounts.permissions import IsAdminRole, IsVendorUser
 from accounts.views import StandardResultsSetPagination
@@ -134,6 +135,14 @@ class VendorApplicationViewSet(viewsets.ModelViewSet):
                 vendor.save()
 
         app_serializer = VendorApplicationSerializer(application)
+
+        # Send approval notification email to vendor
+        email_sent, email_msg = send_vendor_approval_email(
+            application=application,
+            username=assigned_user.username,
+            temporary_password=initial_password
+        )
+
         response_data = {
             'message': f"Vendor application approved and portal access created for {application.company_name}.",
             'application': app_serializer.data,
@@ -142,8 +151,11 @@ class VendorApplicationViewSet(viewsets.ModelViewSet):
                 'email': assigned_user.email,
                 'temporary_password': initial_password,
                 'company_name': application.company_name
-            }
+            },
+            'email_notification_sent': email_sent
         }
+        if not email_sent:
+            response_data['email_warning'] = email_msg
 
         return Response(response_data, status=status.HTTP_200_OK)
 
@@ -210,12 +222,24 @@ class VendorApplicationViewSet(viewsets.ModelViewSet):
             vendor.status = Vendor.StatusChoices.ACTIVE
             vendor.save()
 
-        return Response({
+        # Send approval/credentials email notification to vendor
+        email_sent, email_msg = send_vendor_approval_email(
+            application=application,
+            username=username,
+            temporary_password=password
+        )
+
+        res_data = {
             'message': f"Login credentials successfully assigned for {vendor.company_name}.",
             'username': username,
             'portal_access_active': True,
-            'vendor_id': vendor.id
-        }, status=status.HTTP_200_OK)
+            'vendor_id': vendor.id,
+            'email_notification_sent': email_sent
+        }
+        if not email_sent:
+            res_data['email_warning'] = email_msg
+
+        return Response(res_data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAdminRole])
     def reject(self, request, pk=None):
@@ -238,11 +262,22 @@ class VendorApplicationViewSet(viewsets.ModelViewSet):
                 vendor.user.is_active = False
                 vendor.user.save()
 
+        # Send rejection notification email to vendor
+        email_sent, email_msg = send_vendor_rejection_email(
+            application=application,
+            rejection_reason=admin_remarks
+        )
+
         app_serializer = VendorApplicationSerializer(application)
-        return Response({
+        response_data = {
             'message': 'Vendor application rejected.',
-            'application': app_serializer.data
-        }, status=status.HTTP_200_OK)
+            'application': app_serializer.data,
+            'email_notification_sent': email_sent
+        }
+        if not email_sent:
+            response_data['email_warning'] = email_msg
+
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class VendorViewSet(viewsets.ModelViewSet):
@@ -262,7 +297,9 @@ class VendorViewSet(viewsets.ModelViewSet):
         if user.is_superuser or user.is_staff or (user.role and user.role.name.lower() in [
             'admin', 'system administrator', 'procurement officer', 'committee member', 'technical officer', 'finance officer'
         ]):
-            return super().get_queryset()
+            return super().get_queryset().exclude(
+                application__status__in=[VendorApplication.StatusChoices.REJECTED, VendorApplication.StatusChoices.PENDING]
+            )
         # If user is vendor, filter to own profile
         return Vendor.objects.filter(user=user)
 

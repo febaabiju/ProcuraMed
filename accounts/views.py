@@ -127,6 +127,11 @@ class UserViewSet(viewsets.ModelViewSet):
 
 
 from rest_framework.views import APIView
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes, force_str
+from django.conf import settings
+from vendors.emails import send_vendor_password_reset_email
 
 
 class ForgotPasswordView(APIView):
@@ -136,23 +141,176 @@ class ForgotPasswordView(APIView):
         username = request.data.get('username', '').strip()
         email = request.data.get('email', '').strip()
 
-        safe_message = 'Password reset request submitted successfully. Please contact the system administrator to reset your password.'
+        if not username or not email:
+            return Response(
+                {'error': 'Please enter both your username and registered email address.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        if username and email:
-            user = User.objects.filter(username__iexact=username, email__iexact=email, is_active=True).first()
-            if user:
-                from vendors.models import Vendor
-                vendor = Vendor.objects.filter(user=user).first()
-                if vendor and vendor.is_active and vendor.status == Vendor.StatusChoices.ACTIVE:
-                    AuditLog.objects.create(
-                        user=user,
-                        action='Vendor Password Reset Requested',
-                        module='Authentication',
-                        description=f"Vendor '@{user.username}' ({vendor.company_name}) submitted a forgot password reset request."
-                    )
+        # Verify that the username and email belong to the same active vendor account
+        user = User.objects.filter(username__iexact=username, email__iexact=email, is_active=True).first()
+        if not user:
+            return Response(
+                {'error': 'No active vendor account was found matching the provided username and email address.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        from vendors.models import Vendor
+        vendor = Vendor.objects.filter(user=user, is_active=True).first()
+        if not vendor or vendor.status != Vendor.StatusChoices.ACTIVE:
+            return Response(
+                {'error': 'No active vendor account was found matching the provided username and email address.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Generate secure Django password reset token
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+
+        # Construct reset URL
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
+        reset_url = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+
+        # Send password reset email via Gmail SMTP
+        email_sent, email_msg = send_vendor_password_reset_email(
+            user=user,
+            vendor=vendor,
+            reset_url=reset_url,
+            expires_in_minutes=30
+        )
+
+        if not email_sent:
+            AuditLog.objects.create(
+                user=user,
+                action='Vendor Password Reset Failed',
+                module='Authentication',
+                description=f"Failed to deliver password reset email to '{user.email}' for vendor '@{user.username}': {email_msg}"
+            )
+            return Response(
+                {
+                    'error': f"Failed to send password reset email: {email_msg}",
+                    'email_sent': False
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        AuditLog.objects.create(
+            user=user,
+            action='Vendor Password Reset Requested',
+            module='Authentication',
+            description=f"Password reset link successfully sent to '{user.email}' for vendor '@{user.username}' ({vendor.company_name})."
+        )
 
         return Response({
-            'message': safe_message,
+            'message': f"A secure password reset link has been sent to your registered email ({user.email}). Please check your inbox.",
+            'success': True,
+            'email_sent': True
+        }, status=status.HTTP_200_OK)
+
+
+class ResetPasswordValidateView(APIView):
+    """
+    Validates whether the provided uid and token are still valid before showing the form.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        uid = request.query_params.get('uid', '').strip()
+        token = request.query_params.get('token', '').strip()
+
+        if not uid or not token:
+            return Response(
+                {'valid': False, 'error': 'Invalid reset link. Missing security token parameters.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user_id = force_str(urlsafe_base64_decode(uid))
+            user = User.objects.filter(pk=user_id, is_active=True).first()
+        except (TypeError, ValueError, OverflowError):
+            user = None
+
+        if not user or not default_token_generator.check_token(user, token):
+            return Response(
+                {'valid': False, 'error': 'This password reset link is invalid or has expired. Please request a new one.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response({
+            'valid': True,
+            'username': user.username,
+            'email': user.email
+        }, status=status.HTTP_200_OK)
+
+
+class ResetPasswordConfirmView(APIView):
+    """
+    Validates token and updates vendor password.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        uid = request.data.get('uid', '').strip()
+        token = request.data.get('token', '').strip()
+        new_password = request.data.get('new_password', '')
+        confirm_password = request.data.get('confirm_password', '')
+
+        if not uid or not token:
+            return Response(
+                {'error': 'Invalid reset request. Missing security tokens.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not new_password:
+            return Response(
+                {'error': 'New password is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if len(new_password) < 8:
+            return Response(
+                {'error': 'Password must be at least 8 characters long.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if new_password != confirm_password:
+            return Response(
+                {'error': 'New password and confirmation password do not match.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user_id = force_str(urlsafe_base64_decode(uid))
+            user = User.objects.filter(pk=user_id, is_active=True).first()
+        except (TypeError, ValueError, OverflowError):
+            user = None
+
+        if not user:
+            return Response(
+                {'error': 'User account not found or is no longer active.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not default_token_generator.check_token(user, token):
+            return Response(
+                {'error': 'This password reset link is invalid or has expired. Please request a new one.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Set new password and mark first_login as False
+        user.set_password(new_password)
+        user.first_login = False
+        user.save()
+
+        AuditLog.objects.create(
+            user=user,
+            action='Vendor Password Reset Completed',
+            module='Authentication',
+            description=f"Vendor user '@{user.username}' successfully reset their password via secure email link."
+        )
+
+        return Response({
+            'message': 'Your password has been reset successfully. You can now log in with your new password.',
             'success': True
         }, status=status.HTTP_200_OK)
 
