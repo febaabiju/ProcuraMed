@@ -35,11 +35,16 @@ venv.bak/
 .env.*.local
 *.env
 
-# SQLite & Local Databases
+# SQLite & Local Databases & Backups
 *.sqlite3
 *.sqlite3-journal
 db.sqlite3
 db.sqlite3-journal
+data_backup*.json
+*.sql
+*.dump
+*.backup
+*.dump.*
 
 # Django Static & Media
 media/
