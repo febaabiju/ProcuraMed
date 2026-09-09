@@ -5,6 +5,7 @@ import axiosClient from '../../api/axiosClient';
 import AdminLayout from '../../components/layout/AdminLayout';
 import Button from '../../components/common/Button';
 import InputField from '../../components/common/InputField';
+import { USER_VALIDATION_RULES, applyServerFieldErrors } from '../../utils/userValidation';
 import {
   HiUserAdd,
   HiSearch,
@@ -64,8 +65,9 @@ const TechnicalOfficerManagementPage = () => {
     register: registerCreate,
     handleSubmit: handleSubmitCreate,
     reset: resetCreate,
+    setError: setErrorCreate,
     formState: { errors: errorsCreate }
-  } = useForm();
+  } = useForm({ mode: 'onChange' });
 
   const {
     register: registerEdit,
@@ -124,7 +126,7 @@ const TechnicalOfficerManagementPage = () => {
     setActionSuccess('');
 
     if (createSpecs.length === 0) {
-      setSpecError('Please select at least one technical specialization.');
+      setSpecError('At least one technical specialization must be selected.');
       return;
     }
 
@@ -151,10 +153,12 @@ const TechnicalOfficerManagementPage = () => {
       setCreateModalOpen(false);
       resetCreate();
       setCreateSpecs([]);
+      setSpecError('');
       fetchUsersData();
     } catch (err) {
       const errData = err.response?.data;
       if (errData) {
+        applyServerFieldErrors(errData, setErrorCreate);
         if (typeof errData === 'string') {
           setActionError(errData);
         } else {
@@ -599,14 +603,14 @@ const TechnicalOfficerManagementPage = () => {
                     <InputField
                       label="Employee ID *"
                       placeholder="e.g. TO101"
-                      {...registerCreate('employee_id', { required: 'Employee ID is required' })}
+                      {...registerCreate('employee_id', USER_VALIDATION_RULES.employee_id)}
                       error={errorsCreate.employee_id?.message}
                     />
 
                     <InputField
                       label="Username *"
-                      placeholder="e.g. jdoe_tech"
-                      {...registerCreate('username', { required: 'Username is required' })}
+                      placeholder="e.g. user_1"
+                      {...registerCreate('username', USER_VALIDATION_RULES.username)}
                       error={errorsCreate.username?.message}
                     />
                   </div>
@@ -615,37 +619,52 @@ const TechnicalOfficerManagementPage = () => {
                     <InputField
                       label="First Name *"
                       placeholder="Robert"
-                      {...registerCreate('first_name', { required: 'First name is required' })}
+                      {...registerCreate('first_name', USER_VALIDATION_RULES.first_name)}
                       error={errorsCreate.first_name?.message}
                     />
 
                     <InputField
                       label="Last Name *"
                       placeholder="Vance"
-                      {...registerCreate('last_name', { required: 'Last name is required' })}
+                      {...registerCreate('last_name', USER_VALIDATION_RULES.last_name)}
                       error={errorsCreate.last_name?.message}
                     />
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <InputField
-                      label="Date of Birth"
+                      label="Date of Birth (DOB) *"
                       type="date"
-                      {...registerCreate('date_of_birth')}
+                      min="1950-01-01"
+                      max="2006-12-31"
+                      {...registerCreate('date_of_birth', USER_VALIDATION_RULES.date_of_birth)}
+                      error={errorsCreate.date_of_birth?.message}
                     />
 
                     <div>
                       <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                        Gender
+                        Gender <span className="text-rose-500">*</span>
                       </label>
                       <select
-                        {...registerCreate('gender')}
-                        className="w-full px-3.5 py-3 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
+                        {...registerCreate('gender', USER_VALIDATION_RULES.gender)}
+                        className={`w-full px-3.5 py-3 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 ${
+                          errorsCreate.gender
+                            ? 'border border-rose-300 bg-rose-50/30 focus:border-rose-500 focus:ring-rose-500/20 text-rose-900'
+                            : 'border border-slate-200 bg-white focus:border-violet-500 focus:ring-violet-500/20'
+                        }`}
                       >
                         <option value="">Select Gender...</option>
                         <option value="Male">Male</option>
                         <option value="Female">Female</option>
                       </select>
+                      {errorsCreate.gender && (
+                        <p className="text-xs text-rose-600 flex items-center gap-1 font-medium mt-1">
+                          <svg className="h-3.5 w-3.5 fill-current" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                          </svg>
+                          {errorsCreate.gender.message}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -658,15 +677,15 @@ const TechnicalOfficerManagementPage = () => {
                     <InputField
                       label="Email Address *"
                       type="email"
-                      placeholder="rvance@hospital.com"
-                      {...registerCreate('email', { required: 'Email address is required' })}
+                      placeholder="user.name@gmail.com"
+                      {...registerCreate('email', USER_VALIDATION_RULES.email)}
                       error={errorsCreate.email?.message}
                     />
 
                     <InputField
                       label="Phone Number *"
-                      placeholder="+1 555-0199"
-                      {...registerCreate('phone', { required: 'Phone number is required' })}
+                      placeholder="9876543210"
+                      {...registerCreate('phone', USER_VALIDATION_RULES.phone)}
                       error={errorsCreate.phone?.message}
                     />
                   </div>
@@ -686,7 +705,9 @@ const TechnicalOfficerManagementPage = () => {
                     Select all categories this Technical Officer is qualified to evaluate:
                   </p>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 max-h-48 overflow-y-auto p-2 bg-slate-50 rounded-2xl border border-slate-200/80">
+                  <div className={`grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 max-h-48 overflow-y-auto p-2 rounded-2xl border ${
+                    specError ? 'bg-rose-50/20 border-rose-300' : 'bg-slate-50 border-slate-200/80'
+                  }`}>
                     {TECHNICAL_SPECIALIZATIONS.map((spec) => {
                       const isSelected = createSpecs.includes(spec);
                       return (
@@ -711,7 +732,12 @@ const TechnicalOfficerManagementPage = () => {
                     })}
                   </div>
                   {specError && (
-                    <p className="text-rose-500 text-[11px] font-semibold mt-1">{specError}</p>
+                    <p className="text-xs text-rose-600 flex items-center gap-1 font-medium mt-1">
+                      <svg className="h-3.5 w-3.5 fill-current" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      {specError}
+                    </p>
                   )}
                 </div>
 

@@ -1,3 +1,4 @@
+import re
 from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -38,6 +39,12 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class UserCreateUpdateSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(required=False, allow_blank=True)
+    employee_id = serializers.CharField(required=False, allow_blank=True)
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
+    email = serializers.CharField(required=False, allow_blank=True)
+    phone = serializers.CharField(required=False, allow_blank=True)
     password = serializers.CharField(write_only=True, required=False, min_length=6)
     role = serializers.PrimaryKeyRelatedField(queryset=Role.objects.all(), required=False, allow_null=True)
     department = serializers.PrimaryKeyRelatedField(queryset=Department.objects.all(), required=False, allow_null=True)
@@ -49,6 +56,106 @@ class UserCreateUpdateSerializer(serializers.ModelSerializer):
             'role', 'department', 'phone', 'date_of_birth', 'gender', 'date_of_joining',
             'technical_specializations', 'is_active', 'first_login'
         ]
+
+    def validate_employee_id(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("Employee ID is required.")
+        if not re.match(r'^[a-zA-Z0-9]+$', value):
+            raise serializers.ValidationError("Employee ID must contain only letters and numbers (no spaces, hyphens, or special characters).")
+        if not (re.search(r'[a-zA-Z]', value) and re.search(r'[0-9]', value)):
+            raise serializers.ValidationError("Employee ID must contain both letters and numbers.")
+        return value
+
+    def validate_username(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("Username is required.")
+        if any(c.isupper() for c in value):
+            raise serializers.ValidationError("Uppercase letters are not allowed in username.")
+        if any(c.isspace() for c in value):
+            raise serializers.ValidationError("Spaces are not allowed in username.")
+        if not re.match(r'^[a-z0-9._]+$', value):
+            raise serializers.ValidationError("Only lowercase letters (a-z), numbers (0-9), underscore (_), and period (.) are allowed.")
+        if not (re.search(r'[a-z]', value) and re.search(r'[0-9]', value) and re.search(r'[._]', value)):
+            raise serializers.ValidationError("Username must contain at least one lowercase letter, one number, and one underscore (_) or period (.).")
+        return value
+
+    def validate_first_name(self, value):
+        val = (value or '').strip()
+        if not val:
+            raise serializers.ValidationError("First name cannot be blank.")
+        return val
+
+    def validate_last_name(self, value):
+        val = (value or '').strip()
+        if not val:
+            raise serializers.ValidationError("Last name cannot be blank.")
+        return val
+
+    def validate_email(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("Email address is required.")
+        if any(c.isupper() for c in value):
+            raise serializers.ValidationError("Email must be in lowercase and end with @gmail.com.")
+        if not re.match(r'^[a-z0-9._%+-]+@gmail\.com$', value):
+            raise serializers.ValidationError("Email must be a valid Gmail address ending with @gmail.com.")
+        return value
+
+    def validate_phone(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("Phone number is required.")
+        if not re.match(r'^\d{10}$', value):
+            raise serializers.ValidationError("Phone number must contain exactly 10 digits.")
+        return value
+
+    def validate_date_of_birth(self, value):
+        if not value:
+            raise serializers.ValidationError("Date of birth is required.")
+        if value.year < 1950 or value.year > 2006:
+            raise serializers.ValidationError("Date of birth must be between 1950 and 2006.")
+        return value
+
+    def validate_gender(self, value):
+        val = (value or '').strip()
+        if not val:
+            raise serializers.ValidationError("Gender is required.")
+        if val not in ['Male', 'Female']:
+            raise serializers.ValidationError("Please select a valid gender (Male or Female).")
+        return val
+
+    def validate(self, attrs):
+        if self.instance is None:
+            # Creation mode: All fields are mandatory and cannot be blank or whitespace-only
+            required_fields = {
+                'employee_id': 'Employee ID',
+                'username': 'Username',
+                'first_name': 'First name',
+                'last_name': 'Last name',
+                'email': 'Email address',
+                'phone': 'Phone number',
+                'date_of_birth': 'Date of birth',
+                'gender': 'Gender',
+            }
+            errors = {}
+            for field, label in required_fields.items():
+                val = attrs.get(field)
+                if val is None or (isinstance(val, str) and not val.strip()):
+                    errors[field] = f"{label} is required."
+            if errors:
+                raise serializers.ValidationError(errors)
+
+            role = attrs.get('role')
+            role_name = role.name.lower() if role else ''
+
+            if 'department' in role_name:
+                if not attrs.get('department'):
+                    raise serializers.ValidationError({'department': "Hospital department is required for Department Staff."})
+
+            if 'technical' in role_name:
+                specs = attrs.get('technical_specializations')
+                if not specs or not isinstance(specs, list) or len(specs) == 0:
+                    raise serializers.ValidationError({'technical_specializations': "At least one technical specialization must be selected."})
+
+        return attrs
 
     def create(self, validated_data):
         import secrets
