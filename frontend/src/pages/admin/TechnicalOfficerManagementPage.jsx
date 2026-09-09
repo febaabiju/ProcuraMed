@@ -131,18 +131,12 @@ const TechnicalOfficerManagementPage = () => {
       return;
     }
 
-    if (data.password !== data.confirmPassword) {
-      setActionError('Passwords do not match.');
-      return;
-    }
-
     setSubmitting(true);
     try {
       const payload = {
         employee_id: data.employee_id.trim(),
         username: data.username.trim(),
         email: data.email.trim(),
-        password: data.password,
         first_name: data.first_name.trim(),
         last_name: data.last_name.trim(),
         date_of_birth: data.date_of_birth || null,
@@ -156,7 +150,7 @@ const TechnicalOfficerManagementPage = () => {
       };
 
       const res = await axiosClient.post('/accounts/users/', payload);
-      setActionSuccess(`Technical officer account successfully created for ${res.data.username || data.username}!`);
+      setActionSuccess(`Technical officer account successfully created for ${res.data.username || data.username}! Login credentials and temporary password have been emailed to ${data.email}.`);
       setCreateModalOpen(false);
       resetCreate();
       setCreateSpecs([]);
@@ -738,26 +732,13 @@ const TechnicalOfficerManagementPage = () => {
                   )}
                 </div>
 
-                {/* Account Details */}
-                <div className="space-y-3 pt-2 border-t border-slate-100">
-                  <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Account Details</p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <InputField
-                      label="Password *"
-                      type="password"
-                      placeholder="••••••••"
-                      {...registerCreate('password', { required: 'Password is required', minLength: { value: 6, message: 'Minimum 6 characters' } })}
-                      error={errorsCreate.password?.message}
-                    />
-
-                    <InputField
-                      label="Confirm Password *"
-                      type="password"
-                      placeholder="••••••••"
-                      {...registerCreate('confirmPassword', { required: 'Confirm password is required' })}
-                      error={errorsCreate.confirmPassword?.message}
-                    />
+                {/* Automatic Credentials Notice */}
+                <div className="p-3 bg-violet-50/70 rounded-2xl border border-violet-100 flex items-start gap-2.5 text-xs text-slate-600">
+                  <div className="w-5 h-5 rounded-full bg-violet-600 text-white flex items-center justify-center flex-shrink-0 font-bold text-[10px] mt-0.5">
+                    i
+                  </div>
+                  <div>
+                    <span className="font-bold text-slate-800">Automatic Credential Delivery:</span> A secure temporary password will be automatically generated and emailed to the officer's registered email address. The user will be required to set a new password on their first login.
                   </div>
                 </div>
 

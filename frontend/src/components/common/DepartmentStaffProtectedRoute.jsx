@@ -3,7 +3,7 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
 const DepartmentStaffProtectedRoute = ({ children }) => {
-  const { isAuthenticated, isDepartmentStaff } = useAuth();
+  const { isAuthenticated, isDepartmentStaff, user } = useAuth();
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
@@ -11,6 +11,10 @@ const DepartmentStaffProtectedRoute = ({ children }) => {
 
   if (!isDepartmentStaff) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (user?.first_login) {
+    return <Navigate to="/set-new-password" replace />;
   }
 
   return children;

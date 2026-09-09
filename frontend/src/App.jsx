@@ -33,6 +33,7 @@ import ProcurementCommitteeDashboardPage from './pages/committee/ProcurementComm
 import CommitteePlaceholderPage from './pages/committee/CommitteePlaceholderPage';
 import TechnicalOfficerDashboardPage from './pages/technicalOfficer/TechnicalOfficerDashboardPage';
 import TechnicalOfficerPlaceholderPage from './pages/technicalOfficer/TechnicalOfficerPlaceholderPage';
+import SetNewPasswordPage from './pages/SetNewPasswordPage';
 
 function App() {
   return (
@@ -41,6 +42,7 @@ function App() {
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/set-new-password" element={<SetNewPasswordPage />} />
           <Route path="/vendor-register" element={<VendorRegisterPage />} />
           <Route path="/register" element={<Navigate to="/vendor-register" replace />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />

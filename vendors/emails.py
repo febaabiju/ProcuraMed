@@ -363,21 +363,29 @@ Website: http://localhost:3000
         return False, err_str
 
 
-def send_vendor_password_reset_email(user, vendor, reset_url, expires_in_minutes=30):
+def send_password_reset_email(user, reset_url, expires_in_minutes=30, vendor=None):
     """
     Sends a secure password-reset email with a one-time reset link and expiration notice
-    to the vendor's registered email address.
+    to the user's registered email address for any supported ProcuraMed role.
     """
     recipient_email = user.email
-    company_name = vendor.company_name if vendor else "Vendor"
-    contact_person = user.get_full_name() or (vendor.contact_person if vendor else user.username) or user.username
+    role_name = user.role.name if user.role else "User"
+    portal_name = f"{role_name} Portal" if "portal" not in role_name.lower() else role_name
+
+    company_name = vendor.company_name if vendor else None
+    contact_person = user.get_full_name() or (vendor.contact_person if vendor else None) or user.username
     from_email = get_from_email()
 
-    subject = f"ProcuraMed - Password Reset Request ({company_name})"
+    if company_name:
+        subject = f"ProcuraMed - Password Reset Request ({company_name})"
+        account_desc = f"Vendor account associated with {company_name}"
+    else:
+        subject = f"ProcuraMed - Password Reset Request ({role_name})"
+        account_desc = f"{role_name} account"
 
     text_content = f"""Dear {contact_person},
 
-We received a request to reset the password for your ProcuraMed Vendor Portal account (@{user.username}).
+We received a request to reset the password for your ProcuraMed {account_desc} (@{user.username}).
 
 To set a new password for your account, please click the secure link below:
 
@@ -423,13 +431,13 @@ Website: http://localhost:3000
                 🔒 Password Reset Request
               </div>
 
-              <h2 style="font-size: 20px; font-weight: 800; color: #0F172A; margin: 0 0 14px 0;">Reset Your Vendor Portal Password</h2>
+              <h2 style="font-size: 20px; font-weight: 800; color: #0F172A; margin: 0 0 14px 0;">Reset Your {portal_name} Password</h2>
               
               <p style="font-size: 14px; line-height: 1.6; color: #475569; margin: 0 0 16px 0;">
                 Dear <strong>{contact_person}</strong>,
               </p>
               <p style="font-size: 14px; line-height: 1.6; color: #475569; margin: 0 0 24px 0;">
-                We received a request to reset the password for your ProcuraMed Vendor account associated with <strong>{company_name}</strong> (Username: <strong style="color: #7C3AED; font-family: monospace;">@{user.username}</strong>).
+                We received a request to reset the password for your ProcuraMed {account_desc} (Username: <strong style="color: #7C3AED; font-family: monospace;">@{user.username}</strong>).
               </p>
 
               <!-- Reset Button CTA -->
@@ -497,12 +505,20 @@ Website: http://localhost:3000
         )
         msg.attach_alternative(html_content, "text/html")
         msg.send(fail_silently=False)
-        logger.info(f"Vendor password reset email successfully sent to {recipient_email} for @{user.username}.")
+        logger.info(f"Password reset email successfully sent to {recipient_email} for @{user.username} ({role_name}).")
         return True, "Password reset email sent successfully"
     except Exception as exc:
-        logger.error(f"Failed to send vendor password reset email to {recipient_email}: {str(exc)}", exc_info=True)
+        logger.error(f"Failed to send password reset email to {recipient_email}: {str(exc)}", exc_info=True)
         err_str = str(exc)
         if "535" in err_str or "Authentication" in err_str or "Username and Password not accepted" in err_str:
             err_str = "Gmail SMTP authentication failed. Please verify the 16-character Google App Password in .env."
         return False, err_str
+
+
+def send_vendor_password_reset_email(user, vendor, reset_url, expires_in_minutes=30):
+    """
+    Backwards-compatible wrapper for send_password_reset_email.
+    """
+    return send_password_reset_email(user=user, reset_url=reset_url, expires_in_minutes=expires_in_minutes, vendor=vendor)
+
 

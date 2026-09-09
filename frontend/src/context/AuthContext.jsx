@@ -29,7 +29,19 @@ export const AuthProvider = ({ children }) => {
       setUser(userData);
       return { success: true, data: response.data };
     } catch (error) {
-      const message = error.response?.data?.detail || 'Invalid credentials. Please verify your login details.';
+      const data = error.response?.data;
+      let message = 'Invalid credentials. Please verify your login details.';
+      if (typeof data?.detail === 'string') {
+        message = data.detail;
+      } else if (Array.isArray(data?.detail) && data.detail.length > 0) {
+        message = data.detail[0];
+      } else if (typeof data?.error === 'string') {
+        message = data.error;
+      } else if (typeof data?.message === 'string') {
+        message = data.message;
+      } else if (typeof data === 'string') {
+        message = data;
+      }
       return { success: false, error: message };
     } finally {
       setLoading(false);

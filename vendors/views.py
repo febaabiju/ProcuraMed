@@ -3,7 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.utils import timezone
-from django.db import transaction
+from django.db import models, transaction
 from django.contrib.auth import get_user_model
 
 from .models import SupplierCategory, VendorApplication, Vendor
@@ -24,16 +24,25 @@ User = get_user_model()
 
 
 class SupplierCategoryViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = SupplierCategory.objects.all().order_by('name')
     serializer_class = SupplierCategorySerializer
     permission_classes = [AllowAny]
     pagination_class = None
     search_fields = ['name']
     ordering_fields = ['name']
 
+    def get_queryset(self):
+        order_cases = [
+            models.When(name=name, then=models.Value(idx))
+            for idx, name in enumerate(SupplierCategory.CATEGORIES)
+        ]
+        return SupplierCategory.objects.all().annotate(
+            sort_order=models.Case(*order_cases, default=models.Value(999), output_field=models.IntegerField())
+        ).order_by('sort_order', 'id')
+
+
 
 class VendorApplicationViewSet(viewsets.ModelViewSet):
-    queryset = VendorApplication.objects.select_related('reviewed_by').prefetch_related('supplier_categories').all().order_by('id')
+    queryset = VendorApplication.objects.select_related('reviewed_by', 'approved_vendor', 'approved_vendor__user').prefetch_related('supplier_categories').all().order_by('id')
     serializer_class = VendorApplicationSerializer
     pagination_class = StandardResultsSetPagination
     filterset_class = VendorApplicationFilter
@@ -75,20 +84,23 @@ class VendorApplicationViewSet(viewsets.ModelViewSet):
                 defaults={'description': 'Approved Supplier Vendor Account', 'is_active': True}
             )
 
-            # 3. Create or get Vendor record
+            # 3. Create or get Vendor record linked to this application
             vendor, created = Vendor.objects.get_or_create(
-                email=application.email,
+                application=application,
                 defaults={
-                    'application': application,
                     'company_name': application.company_name,
                     'contact_person': application.contact_person,
+                    'email': application.email,
                     'phone': application.phone,
                     'status': Vendor.StatusChoices.ACTIVE,
                     'is_active': True,
                 }
             )
             if not created:
-                vendor.application = application
+                vendor.company_name = application.company_name
+                vendor.contact_person = application.contact_person
+                vendor.email = application.email
+                vendor.phone = application.phone
                 vendor.status = Vendor.StatusChoices.ACTIVE
                 vendor.is_active = True
                 vendor.save()
@@ -175,7 +187,7 @@ class VendorApplicationViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             # Get or create vendor
-            vendor = getattr(application, 'approved_vendor', None) or Vendor.objects.filter(email=application.email).first()
+            vendor = getattr(application, 'approved_vendor', None) or Vendor.objects.filter(application=application).first()
             if not vendor:
                 vendor = Vendor.objects.create(
                     application=application,
@@ -240,6 +252,43 @@ class VendorApplicationViewSet(viewsets.ModelViewSet):
             res_data['email_warning'] = email_msg
 
         return Response(res_data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminRole])
+    def toggle_status(self, request, pk=None):
+        application = self.get_object()
+        vendor = getattr(application, 'approved_vendor', None)
+        if not vendor:
+            vendor = Vendor.objects.create(
+                application=application,
+                company_name=application.company_name,
+                contact_person=application.contact_person,
+                email=application.email,
+                phone=application.phone,
+                status=Vendor.StatusChoices.ACTIVE,
+                is_active=True,
+            )
+            vendor.supplier_categories.set(application.supplier_categories.all())
+
+        vendor.is_active = not vendor.is_active
+        vendor.status = Vendor.StatusChoices.ACTIVE if vendor.is_active else Vendor.StatusChoices.INACTIVE
+        vendor.save()
+        if vendor.user:
+            vendor.user.is_active = vendor.is_active
+            vendor.user.save()
+
+        AuditLog.objects.create(
+            user=request.user,
+            action='Vendor Status Toggle',
+            module='Vendor Management',
+            description=f"Administrator toggled status for vendor '{vendor.company_name}' to {'ACTIVE' if vendor.is_active else 'INACTIVE'}."
+        )
+
+        return Response({
+            'status': 'Vendor status updated',
+            'is_active': vendor.is_active,
+            'vendor_status': vendor.status,
+            'portal_access_active': bool(vendor.is_active and vendor.user and vendor.user.is_active)
+        }, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAdminRole])
     def reject(self, request, pk=None):

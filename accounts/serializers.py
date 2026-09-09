@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import Role, Department, User, AuditLog
 
@@ -50,10 +51,31 @@ class UserCreateUpdateSerializer(serializers.ModelSerializer):
         ]
 
     def create(self, validated_data):
+        import secrets
+        import string
+        from .emails import send_user_credentials_email
+
         request = self.context.get('request')
         password = validated_data.pop('password', None)
         if request and request.user.is_authenticated:
             validated_data['created_by'] = request.user
+
+        # When password is not provided (Admin Add User flow), automatically generate a secure temporary password
+        temp_password = None
+        if not password:
+            chars_upper = string.ascii_uppercase
+            chars_lower = string.ascii_lowercase
+            chars_digits = string.digits
+            specials = '@#$%'
+            temp_password = (
+                secrets.choice(chars_upper) +
+                secrets.choice(chars_lower) +
+                secrets.choice(chars_digits) +
+                secrets.choice(specials) +
+                ''.join(secrets.choice(chars_upper + chars_lower + chars_digits) for _ in range(6))
+            )
+            password = temp_password
+            validated_data['first_login'] = True
 
         user = User(**validated_data)
         if password:
@@ -61,6 +83,11 @@ class UserCreateUpdateSerializer(serializers.ModelSerializer):
         else:
             user.set_unusable_password()
         user.save()
+
+        # Dispatch credentials email to the user's registered email
+        if temp_password and user.email:
+            send_user_credentials_email(user, temp_password)
+
         return user
 
     def update(self, instance, validated_data):
@@ -89,24 +116,76 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
-        username = attrs.get(self.username_field)
-        if username and '@' in username:
-            user_by_email = User.objects.filter(email__iexact=username).first()
-            if user_by_email:
-                attrs[self.username_field] = user_by_email.username
+        raw_username = (attrs.get(self.username_field) or '').strip()
+        password = attrs.get('password', '')
 
-        data = super().validate(attrs)
-        
+        if not raw_username:
+            raise AuthenticationFailed("No account found with the given username or email.")
+
+        # Identify candidate user(s) by username or email
+        user = None
+        if '@' in raw_username:
+            matching_users = list(User.objects.filter(email__iexact=raw_username))
+            if not matching_users:
+                user = User.objects.filter(username__iexact=raw_username).first()
+            elif len(matching_users) == 1:
+                user = matching_users[0]
+            else:
+                # Check active user with matching password
+                for u in matching_users:
+                    if u.is_active and u.check_password(password):
+                        user = u
+                        break
+                if not user:
+                    # Check inactive user with matching password
+                    for u in matching_users:
+                        if not u.is_active and u.check_password(password):
+                            user = u
+                            break
+                if not user:
+                    # Fallback to an inactive account if all are inactive, otherwise first active account
+                    if all(not u.is_active for u in matching_users):
+                        user = matching_users[0]
+                    else:
+                        user = next((u for u in matching_users if u.is_active), matching_users[0])
+        else:
+            user = User.objects.filter(username__iexact=raw_username).first()
+            if not user:
+                user = User.objects.filter(email__iexact=raw_username).first()
+
+        # Check 1: Account does not exist
+        if not user:
+            raise AuthenticationFailed("No account found with the given username or email.")
+
+        # Check 2: Account is inactive / deactivated
+        if not user.is_active:
+            raise AuthenticationFailed("Your account is inactive. Please contact the administrator.")
+
+        # Check 3: Incorrect password
+        if not user.check_password(password):
+            raise AuthenticationFailed("Incorrect password. Please try again.")
+
+        attrs[self.username_field] = user.username
+
+        try:
+            data = super().validate(attrs)
+        except AuthenticationFailed:
+            if not user.check_password(password):
+                raise AuthenticationFailed("Incorrect password. Please try again.")
+            if not user.is_active:
+                raise AuthenticationFailed("Your account is inactive. Please contact the administrator.")
+            raise
+
         is_vendor = bool(self.user.role and self.user.role.name.lower() == 'vendor')
         if is_vendor:
             from vendors.models import Vendor, VendorApplication
             vendor = getattr(self.user, 'vendor_profile', None) or Vendor.objects.filter(user=self.user).first()
             if not vendor:
-                raise serializers.ValidationError({"detail": "No approved vendor profile is associated with this account. Access denied."})
+                raise AuthenticationFailed("No approved vendor profile is associated with this account. Access denied.")
             if not vendor.is_active or vendor.status != Vendor.StatusChoices.ACTIVE:
-                raise serializers.ValidationError({"detail": "Vendor portal access has been disabled or revoked. Please contact the administrator."})
+                raise AuthenticationFailed("Your account is inactive. Please contact the administrator.")
             if vendor.application and vendor.application.status != VendorApplication.StatusChoices.APPROVED:
-                raise serializers.ValidationError({"detail": "Vendor application has not been approved. Access denied."})
+                raise AuthenticationFailed("Vendor application has not been approved. Access denied.")
 
         data['user'] = {
             'id': self.user.id,

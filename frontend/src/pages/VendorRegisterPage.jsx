@@ -21,19 +21,19 @@ import Button from '../components/common/Button';
 
 const DEFAULT_CATEGORIES = [
   'Medical Equipment & Devices',
+  'Biomedical Equipment',
+  'Medical Consumables',
   'Laboratory Equipment & Supplies',
   'Surgical Instruments',
   'Diagnostic Equipment',
   'Radiology & Imaging Equipment',
   'ICU & Critical Care Equipment',
-  'Pharmaceuticals & Medical Consumables',
+  'Hospital Furniture & Fixtures',
   'IT Hardware & Software',
-  'Office Supplies & Stationery',
-  'Furniture & Fixtures',
-  'Biomedical Equipment',
   'Maintenance & Technical Services',
+  'General Hospital Supplies',
   'Cleaning & Housekeeping Supplies',
-  'General Hospital Supplies'
+  'Other'
 ];
 
 const VendorRegisterPage = () => {
@@ -62,7 +62,12 @@ const VendorRegisterPage = () => {
         const res = await axiosClient.get('/vendors/categories/');
         const cats = res.data.results || res.data || [];
         if (cats.length > 0) {
-          setCategories(cats);
+          const sortedCats = [...cats].sort((a, b) => {
+            const indexA = DEFAULT_CATEGORIES.indexOf(a.name);
+            const indexB = DEFAULT_CATEGORIES.indexOf(b.name);
+            return (indexA === -1 ? 999 : indexA) - (indexB === -1 ? 999 : indexB);
+          });
+          setCategories(sortedCats);
         } else {
           setCategories(DEFAULT_CATEGORIES.map((c, i) => ({ id: i + 1, name: c })));
         }

@@ -3,7 +3,7 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
 const PurchaseOfficerProtectedRoute = ({ children }) => {
-  const { isAuthenticated, isPurchaseOfficer } = useAuth();
+  const { isAuthenticated, isPurchaseOfficer, user } = useAuth();
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
@@ -11,6 +11,10 @@ const PurchaseOfficerProtectedRoute = ({ children }) => {
 
   if (!isPurchaseOfficer) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (user?.first_login) {
+    return <Navigate to="/set-new-password" replace />;
   }
 
   return children;

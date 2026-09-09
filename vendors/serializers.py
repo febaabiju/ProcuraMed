@@ -26,6 +26,8 @@ class VendorApplicationSerializer(serializers.ModelSerializer):
     portal_username = serializers.SerializerMethodField()
     portal_access_active = serializers.SerializerMethodField()
     vendor_id = serializers.SerializerMethodField()
+    vendor_code = serializers.SerializerMethodField()
+    is_active = serializers.SerializerMethodField()
 
     class Meta:
         model = VendorApplication
@@ -34,7 +36,8 @@ class VendorApplicationSerializer(serializers.ModelSerializer):
             'address', 'supplier_categories', 'supplier_category_details',
             'products_services_offered', 'certificate_file', 'status',
             'admin_remarks', 'submitted_at', 'reviewed_at', 'reviewed_by', 'reviewed_by_name',
-            'has_credentials', 'portal_username', 'portal_access_active', 'vendor_id'
+            'has_credentials', 'portal_username', 'portal_access_active', 'vendor_id',
+            'vendor_code', 'is_active'
         ]
         read_only_fields = ['id', 'application_code', 'status', 'admin_remarks', 'submitted_at', 'reviewed_at', 'reviewed_by']
 
@@ -62,6 +65,17 @@ class VendorApplicationSerializer(serializers.ModelSerializer):
         if hasattr(obj, 'approved_vendor') and obj.approved_vendor:
             return obj.approved_vendor.id
         return None
+
+    def get_vendor_code(self, obj):
+        if hasattr(obj, 'approved_vendor') and obj.approved_vendor:
+            return obj.approved_vendor.vendor_code
+        return None
+
+    def get_is_active(self, obj):
+        if hasattr(obj, 'approved_vendor') and obj.approved_vendor:
+            vendor = obj.approved_vendor
+            return bool(vendor.is_active and vendor.status == Vendor.StatusChoices.ACTIVE and (not vendor.user or vendor.user.is_active))
+        return True
 
 
 class VendorApplicationReviewSerializer(serializers.Serializer):

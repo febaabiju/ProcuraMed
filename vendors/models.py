@@ -4,17 +4,51 @@ from django.utils import timezone
 
 
 class SupplierCategory(models.Model):
-    name = models.CharField(max_length=100, unique=True)
+    class CategoryChoices(models.TextChoices):
+        MEDICAL_EQUIPMENT_DEVICES = 'Medical Equipment & Devices', 'Medical Equipment & Devices'
+        BIOMEDICAL_EQUIPMENT = 'Biomedical Equipment', 'Biomedical Equipment'
+        MEDICAL_CONSUMABLES = 'Medical Consumables', 'Medical Consumables'
+        LABORATORY_EQUIPMENT_SUPPLIES = 'Laboratory Equipment & Supplies', 'Laboratory Equipment & Supplies'
+        SURGICAL_INSTRUMENTS = 'Surgical Instruments', 'Surgical Instruments'
+        DIAGNOSTIC_EQUIPMENT = 'Diagnostic Equipment', 'Diagnostic Equipment'
+        RADIOLOGY_IMAGING_EQUIPMENT = 'Radiology & Imaging Equipment', 'Radiology & Imaging Equipment'
+        ICU_CRITICAL_CARE_EQUIPMENT = 'ICU & Critical Care Equipment', 'ICU & Critical Care Equipment'
+        HOSPITAL_FURNITURE_FIXTURES = 'Hospital Furniture & Fixtures', 'Hospital Furniture & Fixtures'
+        IT_HARDWARE_SOFTWARE = 'IT Hardware & Software', 'IT Hardware & Software'
+        MAINTENANCE_TECHNICAL_SERVICES = 'Maintenance & Technical Services', 'Maintenance & Technical Services'
+        GENERAL_HOSPITAL_SUPPLIES = 'General Hospital Supplies', 'General Hospital Supplies'
+        CLEANING_HOUSEKEEPING_SUPPLIES = 'Cleaning & Housekeeping Supplies', 'Cleaning & Housekeeping Supplies'
+        OTHER = 'Other', 'Other'
+
+    CATEGORIES = [
+        'Medical Equipment & Devices',
+        'Biomedical Equipment',
+        'Medical Consumables',
+        'Laboratory Equipment & Supplies',
+        'Surgical Instruments',
+        'Diagnostic Equipment',
+        'Radiology & Imaging Equipment',
+        'ICU & Critical Care Equipment',
+        'Hospital Furniture & Fixtures',
+        'IT Hardware & Software',
+        'Maintenance & Technical Services',
+        'General Hospital Supplies',
+        'Cleaning & Housekeeping Supplies',
+        'Other',
+    ]
+
+    name = models.CharField(max_length=100, unique=True, choices=CategoryChoices.choices)
     description = models.TextField(blank=True, null=True)
 
     class Meta:
         db_table = 'tbl_supplier_category'
         verbose_name = 'Supplier Category'
         verbose_name_plural = 'Supplier Categories'
-        ordering = ['name']
+        ordering = ['id']
 
     def __str__(self):
         return self.name
+
 
 
 class VendorApplication(models.Model):
@@ -93,7 +127,7 @@ class Vendor(models.Model):
     )
     company_name = models.CharField(max_length=255)
     contact_person = models.CharField(max_length=100)
-    email = models.EmailField(unique=True)
+    email = models.EmailField()
     phone = models.CharField(max_length=20)
     supplier_categories = models.ManyToManyField(
         SupplierCategory,
@@ -125,7 +159,11 @@ class Vendor(models.Model):
         if not self.vendor_code:
             year = timezone.now().strftime('%Y')
             count = Vendor.objects.filter(created_at__year=year).count() + 1
-            self.vendor_code = f"VEN-{year}-{count:05d}"
+            code = f"VEN-{year}-{count:05d}"
+            while Vendor.objects.filter(vendor_code=code).exists():
+                count += 1
+                code = f"VEN-{year}-{count:05d}"
+            self.vendor_code = code
         super().save(*args, **kwargs)
 
     def __str__(self):

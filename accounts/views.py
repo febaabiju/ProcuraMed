@@ -67,6 +67,15 @@ class UserViewSet(viewsets.ModelViewSet):
             return [IsAdminRole()]
         return super().get_permissions()
 
+    def perform_create(self, serializer):
+        user = serializer.save()
+        AuditLog.objects.create(
+            user=self.request.user if self.request.user.is_authenticated else None,
+            action='User Account Created',
+            module='User Management',
+            description=f"Administrator created account for user '@{user.username}' ({user.role.name if user.role else 'Staff'}). Temporary password generated and credentials emailed."
+        )
+
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def me(self, request):
         serializer = UserSerializer(request.user)
@@ -131,7 +140,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
 from django.conf import settings
-from vendors.emails import send_vendor_password_reset_email
+from vendors.emails import send_password_reset_email
 
 
 class ForgotPasswordView(APIView):
@@ -147,21 +156,53 @@ class ForgotPasswordView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Verify that the username and email belong to the same active vendor account
-        user = User.objects.filter(username__iexact=username, email__iexact=email, is_active=True).first()
+        # Look up active user matching both username and email
+        user = User.objects.select_related('role').filter(
+            username__iexact=username, email__iexact=email, is_active=True
+        ).first()
+
         if not user:
             return Response(
-                {'error': 'No active vendor account was found matching the provided username and email address.'},
+                {'error': 'No active account was found matching the provided username and email address.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        from vendors.models import Vendor
-        vendor = Vendor.objects.filter(user=user, is_active=True).first()
-        if not vendor or vendor.status != Vendor.StatusChoices.ACTIVE:
+        # Admin accounts MUST NOT have access to Forgot Password
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin = bool(
+            user.is_superuser or 
+            user.is_staff or 
+            role_name in ['admin', 'system administrator']
+        )
+        if is_admin:
             return Response(
-                {'error': 'No active vendor account was found matching the provided username and email address.'},
+                {'error': 'Password reset is not available for Administrator accounts. Please contact system security or server administration.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Verify the user belongs to one of the supported non-admin roles:
+        # Vendor, Department Staff, Purchase Officer, Procurement Committee, Technical Officer
+        is_vendor = 'vendor' in role_name
+        is_department_staff = 'staff' in role_name or 'department' in role_name
+        is_purchase_officer = 'purchase' in role_name or 'procurement officer' in role_name
+        is_committee = 'committee' in role_name
+        is_technical_officer = 'technical' in role_name
+
+        if not (is_vendor or is_department_staff or is_purchase_officer or is_committee or is_technical_officer):
+            return Response(
+                {'error': 'Self-service password reset is not supported for this account role. Please contact an administrator.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        vendor = None
+        if is_vendor:
+            from vendors.models import Vendor
+            vendor = Vendor.objects.filter(user=user, is_active=True).first()
+            if not vendor or vendor.status != Vendor.StatusChoices.ACTIVE:
+                return Response(
+                    {'error': 'No active vendor account was found matching the provided username and email address.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
         # Generate secure Django password reset token
         uid = urlsafe_base64_encode(force_bytes(user.pk))
@@ -172,19 +213,21 @@ class ForgotPasswordView(APIView):
         reset_url = f"{frontend_url}/reset-password?uid={uid}&token={token}"
 
         # Send password reset email via Gmail SMTP
-        email_sent, email_msg = send_vendor_password_reset_email(
+        email_sent, email_msg = send_password_reset_email(
             user=user,
-            vendor=vendor,
             reset_url=reset_url,
-            expires_in_minutes=30
+            expires_in_minutes=30,
+            vendor=vendor
         )
+
+        role_label = user.role.name if user.role else 'User'
 
         if not email_sent:
             AuditLog.objects.create(
                 user=user,
-                action='Vendor Password Reset Failed',
+                action='Password Reset Failed',
                 module='Authentication',
-                description=f"Failed to deliver password reset email to '{user.email}' for vendor '@{user.username}': {email_msg}"
+                description=f"Failed to deliver password reset email to '{user.email}' for user '@{user.username}' ({role_label}): {email_msg}"
             )
             return Response(
                 {
@@ -196,9 +239,9 @@ class ForgotPasswordView(APIView):
 
         AuditLog.objects.create(
             user=user,
-            action='Vendor Password Reset Requested',
+            action='Password Reset Requested',
             module='Authentication',
-            description=f"Password reset link successfully sent to '{user.email}' for vendor '@{user.username}' ({vendor.company_name})."
+            description=f"Password reset link successfully sent to '{user.email}' for user '@{user.username}' ({role_label})."
         )
 
         return Response({
@@ -302,11 +345,12 @@ class ResetPasswordConfirmView(APIView):
         user.first_login = False
         user.save()
 
+        role_str = user.role.name if user.role else 'User'
         AuditLog.objects.create(
             user=user,
-            action='Vendor Password Reset Completed',
+            action='Password Reset Completed',
             module='Authentication',
-            description=f"Vendor user '@{user.username}' successfully reset their password via secure email link."
+            description=f"User '@{user.username}' ({role_str}) successfully reset their password via secure email link."
         )
 
         return Response({

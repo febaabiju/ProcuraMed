@@ -22,7 +22,18 @@ import Button from '../components/common/Button';
 
 const LoginPage = () => {
   const { register, handleSubmit, formState: { errors } } = useForm();
-  const { login, loading, isAuthenticated, isAdmin, isVendor, user } = useAuth();
+  const {
+    login,
+    loading,
+    isAuthenticated,
+    isAdmin,
+    isVendor,
+    isDepartmentStaff,
+    isPurchaseOfficer,
+    isCommitteeMember,
+    isTechnicalOfficer,
+    user
+  } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [apiError, setApiError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -44,6 +55,21 @@ const LoginPage = () => {
     }
     if (isVendor) {
       return <Navigate to={user?.first_login ? "/vendor/change-password" : "/vendor/dashboard"} replace />;
+    }
+    if (user?.first_login) {
+      return <Navigate to="/set-new-password" replace />;
+    }
+    if (isDepartmentStaff) {
+      return <Navigate to="/staff/dashboard" replace />;
+    }
+    if (isPurchaseOfficer) {
+      return <Navigate to="/purchase-officer/dashboard" replace />;
+    }
+    if (isCommitteeMember) {
+      return <Navigate to="/committee/dashboard" replace />;
+    }
+    if (isTechnicalOfficer) {
+      return <Navigate to="/technical-officer/dashboard" replace />;
     }
   }
 
@@ -108,6 +134,8 @@ const LoginPage = () => {
           } else {
             navigate('/vendor/dashboard', { replace: true });
           }
+        } else if (userData?.first_login) {
+          navigate('/set-new-password', { replace: true });
         } else if (isStaffUser) {
           navigate('/staff/dashboard');
         } else if (isPurchaseOfficerUser) {
@@ -328,7 +356,7 @@ const LoginPage = () => {
                   </div>
                   <div>
                     <h3 className="text-base font-extrabold text-slate-900">Forgot Password</h3>
-                    <p className="text-xs text-slate-500">Reset your vendor password via secure email link</p>
+                    <p className="text-xs text-slate-500">Reset your account password via secure email link</p>
                   </div>
                 </div>
                 <button
@@ -375,7 +403,7 @@ const LoginPage = () => {
               ) : (
                 <form onSubmit={handleForgotPasswordSubmit} className="space-y-4 text-xs">
                   <p className="text-slate-600 leading-relaxed text-[11px]">
-                    Enter your username and registered business email address. If verified, we will send a secure password reset link to your email.
+                    Enter your username and registered email address. If verified, we will send a secure password reset link to your email.
                   </p>
 
                   {forgotError && (
@@ -391,7 +419,7 @@ const LoginPage = () => {
                     </label>
                     <InputField
                       type="text"
-                      placeholder="e.g. vendor001 / medtech_supplies"
+                      placeholder="e.g. your username or ID"
                       icon={HiUser}
                       value={forgotUsername}
                       onChange={(e) => setForgotUsername(e.target.value)}
@@ -405,7 +433,7 @@ const LoginPage = () => {
                     </label>
                     <InputField
                       type="email"
-                      placeholder="e.g. contact@medtech.com"
+                      placeholder="e.g. your-email@hospital.com"
                       icon={HiMail}
                       value={forgotEmail}
                       onChange={(e) => setForgotEmail(e.target.value)}

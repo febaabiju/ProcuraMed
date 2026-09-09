@@ -67,20 +67,21 @@ class Command(BaseCommand):
         # 3. Seed Supplier Categories
         categories_data = [
             {'name': 'Medical Equipment & Devices', 'description': 'Specialized medical instruments, diagnostic machinery, patient monitoring, life-support systems, and therapeutic devices.'},
+            {'name': 'Biomedical Equipment', 'description': 'Biomedical sensors, calibration meters, safety analyzers, electromedical parts, and life-support test apparatus.'},
+            {'name': 'Medical Consumables', 'description': 'Disposable medical consumables, syringes, cannulas, gloves, surgical dressings, and sterile supplies.'},
             {'name': 'Laboratory Equipment & Supplies', 'description': 'Clinical analyzers, lab reagents, microscopes, centrifuges, glassware, test tubes, and pathology diagnostic tools.'},
             {'name': 'Surgical Instruments', 'description': 'Precision surgical instruments, scalpels, forceps, retractors, surgical sets, trays, and sterilizable OR tools.'},
             {'name': 'Diagnostic Equipment', 'description': 'Ultrasound systems, ECG/EKG machines, patient vitals monitors, endoscopy sets, and point-of-care diagnostic tools.'},
             {'name': 'Radiology & Imaging Equipment', 'description': 'X-ray machines, MRI, CT scanning systems, ultrasound probes, PACS hardware, and radiology imaging accessories.'},
             {'name': 'ICU & Critical Care Equipment', 'description': 'Ventilators, syringe and infusion pumps, defibrillators, multipara monitors, and emergency resuscitation gear.'},
-            {'name': 'Pharmaceuticals & Medical Consumables', 'description': 'Prescription medications, IV solutions, disposable syringes, cannulas, gloves, surgical dressings, and sterile consumables.'},
+            {'name': 'Hospital Furniture & Fixtures', 'description': 'Hospital patient beds, examination tables, surgical carts, medical recliners, doctor chairs, and ward cabinets.'},
             {'name': 'IT Hardware & Software', 'description': 'Hospital information systems (HIS), workstations, servers, barcode scanners, networking devices, and clinical software.'},
-            {'name': 'Office Supplies & Stationery', 'description': 'Administrative documentation, medical charts, filing cabinets, printer supplies, and hospital operational stationery.'},
-            {'name': 'Furniture & Fixtures', 'description': 'Hospital patient beds, examination tables, surgical carts, medical recliners, doctor chairs, and ward cabinets.'},
-            {'name': 'Biomedical Equipment', 'description': 'Biomedical sensors, calibration meters, safety analyzers, electromedical parts, and life-support test apparatus.'},
             {'name': 'Maintenance & Technical Services', 'description': 'Preventive maintenance contracts, calibration services, biomedical engineering repairs, and equipment overhauls.'},
-            {'name': 'Cleaning & Housekeeping Supplies', 'description': 'Hospital-grade disinfectants, sanitizing chemicals, biohazard disposal bags, janitorial tools, and sterilizing fluids.'},
             {'name': 'General Hospital Supplies', 'description': 'Hospital linens, patient gowns, staff scrubs, identification wristbands, catering disposables, and facility sundries.'},
+            {'name': 'Cleaning & Housekeeping Supplies', 'description': 'Hospital-grade disinfectants, sanitizing chemicals, biohazard disposal bags, janitorial tools, and sterilizing fluids.'},
+            {'name': 'Other', 'description': 'Other specialized hospital supplies, medical items, and healthcare procurement services not categorized above.'},
         ]
+
 
         cat_objs = {}
         for cdata in categories_data:

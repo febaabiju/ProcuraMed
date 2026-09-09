@@ -9,7 +9,6 @@ import {
   HiCheckCircle,
   HiXCircle,
   HiEye,
-  HiKey,
   HiRefresh,
   HiX,
   HiFilter,
@@ -20,8 +19,7 @@ import {
   HiDocumentText,
   HiExternalLink,
   HiShieldCheck,
-  HiTag,
-  HiClipboardCopy
+  HiTag
 } from 'react-icons/hi';
 
 const VendorManagementPage = () => {
@@ -36,17 +34,35 @@ const VendorManagementPage = () => {
   // Modals state
   const [selectedVendor, setSelectedVendor] = useState(null);
   const [viewModalOpen, setViewModalOpen] = useState(false);
-  const [resetModalOpen, setResetModalOpen] = useState(false);
   const [toggleModalOpen, setToggleModalOpen] = useState(false);
-  const [newPasswordData, setNewPasswordData] = useState(null);
-  const [copied, setCopied] = useState(false);
 
   const fetchVendors = async () => {
     setLoading(true);
     setActionError('');
     try {
-      const res = await axiosClient.get('/vendors/vendors/', { params: { page_size: 500 } });
-      setVendors(res.data.results || res.data || []);
+      // Use the exact same approved applications data source as Vendor Applications -> Approved tab
+      const res = await axiosClient.get('/vendors/applications/', {
+        params: { status: 'APPROVED', page_size: 500 }
+      });
+      const data = res.data.results || res.data || [];
+      const approvedVendors = data
+        .filter((app) => app.status === 'APPROVED')
+        .map((app) => ({
+          ...app,
+          vendor_id: app.vendor_id || app.id,
+          application_id: app.id,
+          vendor_code: app.vendor_code || `VEN-2026-${String(app.id).padStart(5, '0')}`,
+          portal_username: app.portal_username,
+          portal_access_active: app.portal_access_active !== undefined ? app.portal_access_active : true,
+          is_active: app.is_active !== undefined ? app.is_active : (app.portal_access_active !== undefined ? app.portal_access_active : true),
+          application_details: {
+            address: app.address,
+            products_services_offered: app.products_services_offered,
+            certificate_file: app.certificate_file,
+            application_code: app.application_code,
+          },
+        }));
+      setVendors(approvedVendors);
     } catch (err) {
       setActionError('Failed to fetch approved vendors directory.');
     } finally {
@@ -64,49 +80,12 @@ const VendorManagementPage = () => {
     setViewModalOpen(true);
   };
 
-  // Open Reset Password Confirmation Modal
-  const openResetModal = (vendor) => {
-    setSelectedVendor(vendor);
-    setActionError('');
-    setActionSuccess('');
-    setResetModalOpen(true);
-  };
-
   // Open Toggle Status Modal (Activate / Deactivate)
   const openToggleModal = (vendor) => {
     setSelectedVendor(vendor);
     setActionError('');
     setActionSuccess('');
     setToggleModalOpen(true);
-  };
-
-  // Confirm Reset Password (Admin generates temporary password & sets force password change)
-  const handleConfirmResetPassword = async () => {
-    if (!selectedVendor) return;
-    setActionError('');
-    setActionSuccess('');
-    setSubmitting(true);
-
-    try {
-      const res = await axiosClient.post(`/vendors/vendors/${selectedVendor.id}/reset_password/`);
-      setNewPasswordData(res.data);
-      setResetModalOpen(false);
-      setCopied(false);
-      fetchVendors();
-    } catch (err) {
-      const errMsg = err.response?.data?.error || err.response?.data?.detail || 'Failed to reset vendor password.';
-      setActionError(errMsg);
-      setResetModalOpen(false);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  // Copy password to clipboard
-  const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
   };
 
   // Execute Activate / Deactivate Account
@@ -117,7 +96,7 @@ const VendorManagementPage = () => {
     setSubmitting(true);
 
     try {
-      const res = await axiosClient.post(`/vendors/vendors/${selectedVendor.id}/toggle_status/`);
+      const res = await axiosClient.post(`/vendors/applications/${selectedVendor.id}/toggle_status/`);
       const isNowActive = res.data.is_active;
       setActionSuccess(
         `Vendor account for "${selectedVendor.company_name}" has been ${
@@ -128,7 +107,22 @@ const VendorManagementPage = () => {
       setSelectedVendor(null);
       fetchVendors();
     } catch (err) {
-      setActionError('Failed to update vendor portal access status.');
+      try {
+        const vendorId = selectedVendor.vendor_id || selectedVendor.id;
+        const res = await axiosClient.post(`/vendors/vendors/${vendorId}/toggle_status/`);
+        const isNowActive = res.data.is_active;
+        setActionSuccess(
+          `Vendor account for "${selectedVendor.company_name}" has been ${
+            isNowActive ? 'activated. Portal access is now Active.' : 'deactivated. Portal access is now Disabled.'
+          }`
+        );
+        setToggleModalOpen(false);
+        setSelectedVendor(null);
+        fetchVendors();
+      } catch (err2) {
+        setActionError('Failed to update vendor portal access status.');
+        setToggleModalOpen(false);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -154,7 +148,7 @@ const VendorManagementPage = () => {
         (v.contact_person && v.contact_person.toLowerCase().includes(term)) ||
         (v.portal_username && v.portal_username.toLowerCase().includes(term));
 
-      const isPortalActive = v.is_active && (v.portal_access_active !== false && v.user);
+      const isPortalActive = Boolean(v.is_active && v.portal_access_active !== false);
       let matchesStatus = true;
       if (statusFilter === 'ACTIVE') {
         matchesStatus = isPortalActive;
@@ -169,7 +163,7 @@ const VendorManagementPage = () => {
   return (
     <AdminLayout
       title="Approved Vendors Directory"
-      subtitle="View approved supplier registration records, manage portal access, and perform admin-controlled password resets."
+      subtitle="View approved supplier registration records and manage portal access."
       onRefresh={fetchVendors}
     >
       <div className="space-y-6">
@@ -184,7 +178,7 @@ const VendorManagementPage = () => {
             </div>
             <div>
               <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">Approved Vendors</h2>
-              <p className="text-xs text-slate-500">System Admin Portal • Read-Only Registry &amp; Credential Control</p>
+              <p className="text-xs text-slate-500">System Admin Portal • Read-Only Registry &amp; Portal Access Control</p>
             </div>
           </div>
         </div>
@@ -283,7 +277,7 @@ const VendorManagementPage = () => {
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                   {filteredVendors.map((v) => {
-                    const isPortalActive = v.is_active && (v.portal_access_active !== false && v.user);
+                    const isPortalActive = Boolean(v.is_active && v.portal_access_active !== false);
                     const usernameDisplay = v.portal_username || v.user_details?.username;
 
                     return (
@@ -339,50 +333,32 @@ const VendorManagementPage = () => {
                         <td className="px-6 py-4 whitespace-nowrap text-center">
                           <span
                             className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                              v.status === 'ACTIVE' && v.is_active
+                              (v.status === 'ACTIVE' || v.status === 'APPROVED') && v.is_active
                                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                 : 'bg-slate-100 text-slate-600 border border-slate-200'
                             }`}
                           >
-                            {v.status === 'ACTIVE' && v.is_active ? 'Active Supplier' : 'Inactive'}
+                            {(v.status === 'ACTIVE' || v.status === 'APPROVED') && v.is_active ? 'Active Supplier' : 'Inactive'}
                           </span>
                         </td>
 
-                        {/* 6. Actions (View Vendor, Reset Password, Activate / Deactivate) */}
+                        {/* 6. Actions (View Vendor, Activate / Deactivate) */}
                         <td className="px-6 py-4 whitespace-nowrap text-center">
                           <div className="flex items-center justify-center gap-1.5">
                             {/* View Vendor (Read-Only) */}
                             <button
                               onClick={() => openViewModal(v)}
                               title="View Vendor Details (Read-Only)"
-                              className="p-1.5 rounded-xl text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
+                              className="p-1.5 rounded-xl text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors cursor-pointer"
                             >
                               <HiEye className="w-4 h-4" />
-                            </button>
-
-                            {/* Reset Password (Admin-Controlled) */}
-                            <button
-                              onClick={() => openResetModal(v)}
-                              disabled={!isPortalActive}
-                              title={
-                                isPortalActive
-                                  ? 'Reset Password (Generate Temporary Password & Force Change)'
-                                  : 'Cannot reset password for deactivated vendor'
-                              }
-                              className={`p-1.5 rounded-xl transition-colors ${
-                                isPortalActive
-                                  ? 'text-slate-400 hover:text-amber-600 hover:bg-amber-50 cursor-pointer'
-                                  : 'text-slate-200 cursor-not-allowed'
-                              }`}
-                            >
-                              <HiKey className="w-4 h-4" />
                             </button>
 
                             {/* Activate / Deactivate Account */}
                             <button
                               onClick={() => openToggleModal(v)}
                               title={v.is_active ? 'Deactivate Vendor Account' : 'Activate Vendor Account'}
-                              className={`p-1.5 rounded-xl transition-colors ${
+                              className={`p-1.5 rounded-xl transition-colors cursor-pointer ${
                                 v.is_active
                                   ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
                                   : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
@@ -499,12 +475,12 @@ const VendorManagementPage = () => {
                     </div>
                   </div>
 
-                  {selectedVendor.application_details?.address && (
+                  {(selectedVendor.address || selectedVendor.application_details?.address) && (
                     <div className="pt-2 border-t border-slate-200/60">
                       <span className="text-slate-400 block text-[11px]">Registered Physical Address:</span>
                       <p className="text-slate-800 font-medium flex items-start gap-1 mt-0.5">
                         <HiLocationMarker className="w-3.5 h-3.5 text-slate-400 mt-0.5 flex-shrink-0" />
-                        <span>{selectedVendor.application_details.address}</span>
+                        <span>{selectedVendor.address || selectedVendor.application_details?.address}</span>
                       </p>
                     </div>
                   )}
@@ -533,20 +509,20 @@ const VendorManagementPage = () => {
                 </div>
 
                 {/* Card 4: Products & Services Description */}
-                {selectedVendor.application_details?.products_services_offered && (
+                {(selectedVendor.products_services_offered || selectedVendor.application_details?.products_services_offered) && (
                   <div className="p-4 bg-slate-50/80 rounded-2xl border border-slate-100 space-y-2">
                     <div className="flex items-center gap-2 text-slate-800 font-bold border-b border-slate-200/80 pb-1.5">
                       <HiDocumentText className="w-4 h-4 text-violet-600" />
                       <span>Products &amp; Services Description</span>
                     </div>
                     <p className="text-slate-700 font-medium leading-relaxed">
-                      {selectedVendor.application_details.products_services_offered}
+                      {selectedVendor.products_services_offered || selectedVendor.application_details?.products_services_offered}
                     </p>
                   </div>
                 )}
 
                 {/* Card 5: Business License / Certificate */}
-                {selectedVendor.application_details?.certificate_file && (
+                {(selectedVendor.certificate_file || selectedVendor.application_details?.certificate_file) && (
                   <div className="p-4 bg-slate-50/80 rounded-2xl border border-slate-100 space-y-2">
                     <div className="flex items-center gap-2 text-slate-800 font-bold border-b border-slate-200/80 pb-1.5">
                       <HiShieldCheck className="w-4 h-4 text-violet-600" />
@@ -556,11 +532,11 @@ const VendorManagementPage = () => {
                       <div className="flex items-center gap-2 text-slate-800 font-medium truncate">
                         <HiDocumentText className="w-5 h-5 text-violet-600 flex-shrink-0" />
                         <span className="truncate text-xs font-bold">
-                          {selectedVendor.application_details.certificate_file.split('/').pop()}
+                          {(selectedVendor.certificate_file || selectedVendor.application_details?.certificate_file).split('/').pop()}
                         </span>
                       </div>
                       <a
-                        href={getCertificateUrl(selectedVendor.application_details.certificate_file)}
+                        href={getCertificateUrl(selectedVendor.certificate_file || selectedVendor.application_details?.certificate_file)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="px-3 py-1.5 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-700 font-bold text-xs inline-flex items-center gap-1.5 transition-colors border border-violet-200 flex-shrink-0"
@@ -581,154 +557,6 @@ const VendorManagementPage = () => {
                   className="border-slate-200 text-slate-700"
                 >
                   Close
-                </Button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* RESET PASSWORD CONFIRMATION MODAL */}
-      <AnimatePresence>
-        {resetModalOpen && selectedVendor && (
-          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-violet-100 space-y-5"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center font-bold">
-                  <HiKey className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900">Reset Vendor Password</h3>
-                  <p className="text-xs text-slate-500 font-medium">{selectedVendor.company_name}</p>
-                </div>
-              </div>
-
-              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 space-y-1.5 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Vendor Name:</span>
-                  <strong className="text-slate-900">{selectedVendor.contact_person || 'N/A'}</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Username:</span>
-                  <strong className="font-mono text-slate-900">
-                    @{selectedVendor.portal_username || selectedVendor.user_details?.username}
-                  </strong>
-                </div>
-              </div>
-
-              <div className="p-3.5 bg-amber-50 rounded-2xl border border-amber-100 text-amber-900 text-xs leading-relaxed space-y-1.5">
-                <p className="font-bold flex items-center gap-1.5">
-                  <HiShieldCheck className="w-4 h-4 text-amber-600" />
-                  <span>Admin-Controlled Reset</span>
-                </p>
-                <p className="text-[11px] text-amber-800">
-                  This will generate a secure temporary password. The existing username remains unchanged. The vendor will be forced to change their password immediately upon their next login before accessing the dashboard.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-2">
-                <Button
-                  variant="outline"
-                  size="md"
-                  onClick={() => setResetModalOpen(false)}
-                  className="border-slate-200 text-slate-700"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="primary"
-                  size="md"
-                  isLoading={submitting}
-                  onClick={handleConfirmResetPassword}
-                  className="bg-amber-600 hover:bg-amber-700 text-white font-bold shadow-md shadow-amber-600/20 gap-1.5"
-                >
-                  <HiKey className="w-4 h-4" />
-                  <span>Generate Temporary Password</span>
-                </Button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* PASSWORD RESET SUCCESSFUL DIALOG */}
-      <AnimatePresence>
-        {newPasswordData && (
-          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-violet-100 space-y-5"
-            >
-              <div className="flex items-center gap-3 border-b border-slate-100 pb-3.5">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
-                  <HiCheckCircle className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900">Password Reset Successful</h3>
-                  <p className="text-xs text-slate-500 font-medium">{newPasswordData.company_name}</p>
-                </div>
-              </div>
-
-              <div className="p-4 bg-violet-50/70 rounded-2xl border border-violet-100 space-y-3 text-xs">
-                <p className="text-slate-600 font-medium leading-relaxed">
-                  A temporary password has been generated securely. Please provide these credentials to the vendor:
-                </p>
-
-                <div className="space-y-2 bg-white p-3.5 rounded-xl border border-violet-200/80">
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-400 font-medium">Username:</span>
-                    <span className="font-mono font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-lg">
-                      @{newPasswordData.username}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-400 font-medium">Temporary Password:</span>
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono font-bold text-violet-700 bg-violet-100/70 px-2 py-0.5 rounded-lg select-all">
-                        {newPasswordData.temporary_password}
-                      </span>
-                      <button
-                        onClick={() => copyToClipboard(newPasswordData.temporary_password)}
-                        className="p-1 rounded-lg text-violet-600 hover:bg-violet-100 transition-colors"
-                        title="Copy Password"
-                      >
-                        <HiClipboardCopy className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {copied && (
-                  <p className="text-[11px] text-emerald-600 font-bold text-right">Copied to clipboard!</p>
-                )}
-
-                <div className="p-2.5 bg-amber-50/80 rounded-xl border border-amber-200/60 text-[11px] text-amber-800 space-y-1">
-                  <p className="font-bold flex items-center gap-1">
-                    <HiShieldCheck className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Force Password Change: Active</span>
-                  </p>
-                  <p className="text-[10px]">
-                    The vendor must change this temporary password upon login before accessing their dashboard.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex justify-end">
-                <Button
-                  variant="primary"
-                  size="md"
-                  onClick={() => setNewPasswordData(null)}
-                  className="font-bold text-white shadow-md shadow-violet-500/20"
-                  style={{ background: 'linear-gradient(135deg, #A78BFA, #7C5FF0)' }}
-                >
-                  Done
                 </Button>
               </div>
             </motion.div>
