@@ -35,23 +35,20 @@ class Command(BaseCommand):
             if created:
                 self.stdout.write(self.style.SUCCESS(f"Created Role: {role.name}"))
 
-        # 2. Seed Departments
+        # 2. Seed Departments (12 Procurement-Based Departments)
         depts_data = [
-            {'name': 'Cardiology', 'code': 'CARD'},
-            {'name': 'Neurology', 'code': 'NEUR'},
-            {'name': 'Orthopedics', 'code': 'ORTHO'},
-            {'name': 'General Medicine', 'code': 'GMED'},
-            {'name': 'General Surgery', 'code': 'SURG'},
-            {'name': 'Pediatrics', 'code': 'PED'},
-            {'name': 'Obstetrics & Gynecology', 'code': 'OBGYN'},
-            {'name': 'Emergency & Trauma', 'code': 'EMERG'},
-            {'name': 'Intensive Care Unit (ICU)', 'code': 'ICU'},
-            {'name': 'Radiology & Imaging', 'code': 'RAD'},
-            {'name': 'Pathology & Laboratory', 'code': 'PATH'},
-            {'name': 'Operation Theatre (OT)', 'code': 'OT'},
+            {'name': 'Medical & Surgical Equipment', 'code': 'MSE'},
             {'name': 'Biomedical Engineering', 'code': 'BME'},
-            {'name': 'Facilities & Maintenance', 'code': 'FAC'},
-            {'name': 'Information Technology', 'code': 'IT'},
+            {'name': 'Laboratory & Diagnostic Services', 'code': 'LDS'},
+            {'name': 'Radiology & Imaging', 'code': 'RAD'},
+            {'name': 'Medical Consumables', 'code': 'MC'},
+            {'name': 'Critical Care & Emergency Services', 'code': 'CCES'},
+            {'name': 'Operation Theatre & Sterilization', 'code': 'OTS'},
+            {'name': 'Facilities & Maintenance', 'code': 'FM'},
+            {'name': 'Housekeeping & Laundry', 'code': 'HKL'},
+            {'name': 'IT & Digital Services', 'code': 'ITDS'},
+            {'name': 'Furniture, Office & General Supplies', 'code': 'FOGS'},
+            {'name': 'Central Stores & Logistics', 'code': 'CSL'},
         ]
 
         dept_objs = {}

@@ -159,6 +159,9 @@ const ProcurementCommitteeDashboardPage = () => {
         return 'bg-violet-50 text-violet-700 border-violet-200';
       case 'bids received':
         return 'bg-indigo-50 text-indigo-700 border-indigo-200';
+      case 'not required':
+      case 'n/a':
+        return 'bg-slate-100 text-slate-500 border-slate-200';
       default:
         return 'bg-slate-50 text-slate-600 border-slate-200';
     }

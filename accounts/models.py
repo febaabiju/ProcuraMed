@@ -99,3 +99,49 @@ class AuditLog(models.Model):
     def __str__(self):
         user_str = self.user.username if self.user else "System"
         return f"{user_str} - {self.action} ({self.created_at.strftime('%Y-%m-%d %H:%M')})"
+
+
+class SystemSetting(models.Model):
+    # 1. General Settings (initially empty string where not yet configured)
+    hospital_name = models.CharField(max_length=255, blank=True, default='')
+    hospital_email = models.EmailField(blank=True, default='')
+    hospital_phone = models.CharField(max_length=50, blank=True, default='')
+    hospital_address = models.TextField(blank=True, default='')
+
+    # 2. Security Settings
+    min_password_length = models.IntegerField(default=6)
+    session_timeout = models.IntegerField(default=60, help_text="Session timeout in minutes")
+    require_password_change = models.BooleanField(default=True, help_text="Require newly created users to change password on first login")
+
+    # 3. Notification Settings
+    email_notifications = models.BooleanField(default=True, help_text="Master toggle for email notifications")
+    vendor_approval_emails = models.BooleanField(default=True)
+    vendor_rejection_emails = models.BooleanField(default=True)
+    new_user_credential_emails = models.BooleanField(default=True)
+
+    # 4. Procurement Settings
+    enable_purchase_requisition = models.BooleanField(default=True)
+    enable_vendor_quotations = models.BooleanField(default=True)
+    enable_purchase_order_processing = models.BooleanField(default=True)
+
+    # Metadata
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='updated_settings')
+
+    class Meta:
+        db_table = 'tbl_system_setting'
+        verbose_name = 'System Setting'
+        verbose_name_plural = 'System Settings'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get_settings(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        return f"System Settings ({self.hospital_name or 'Not Configured'})"
+

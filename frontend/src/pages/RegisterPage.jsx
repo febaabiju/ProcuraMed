@@ -47,11 +47,18 @@ const RegisterPage = () => {
           { value: 5, label: 'Vendor' },
         ]);
         setDepartments([
-          { value: 1, label: 'Cardiology' },
-          { value: 2, label: 'Radiology & Imaging' },
-          { value: 3, label: 'IT & Bio-Medical Infrastructure' },
-          { value: 4, label: 'Intensive Care Unit (ICU)' },
-          { value: 5, label: 'Maintenance & Facility' },
+          { value: 1, label: 'Medical & Surgical Equipment' },
+          { value: 2, label: 'Biomedical Engineering' },
+          { value: 3, label: 'Laboratory & Diagnostic Services' },
+          { value: 4, label: 'Radiology & Imaging' },
+          { value: 5, label: 'Medical Consumables' },
+          { value: 6, label: 'Critical Care & Emergency Services' },
+          { value: 7, label: 'Operation Theatre & Sterilization' },
+          { value: 8, label: 'Facilities & Maintenance' },
+          { value: 9, label: 'Housekeeping & Laundry' },
+          { value: 10, label: 'IT & Digital Services' },
+          { value: 11, label: 'Furniture, Office & General Supplies' },
+          { value: 12, label: 'Central Stores & Logistics' },
         ]);
       }
     };

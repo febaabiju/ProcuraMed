@@ -253,11 +253,21 @@ class PurchaseOfficerDashboardView(APIView):
         completed_procurement_count = PurchaseOrder.objects.filter(status='CLOSED').count() + Requisition.objects.filter(status='COMPLETED').count()
 
         # 2. Pipeline Overview (8 stages)
+        tech_eval_count = Quotation.objects.filter(
+            status='UNDER_REVIEW',
+            quotation_request__requisition__requires_technical_evaluation=True
+        ).count()
+        if tech_eval_count == 0:
+            tech_eval_count = Requisition.objects.filter(
+                status='UNDER_REVIEW',
+                requires_technical_evaluation=True
+            ).count()
+
         pipeline = {
             'requisition_received': Requisition.objects.filter(status__in=['PENDING_APPROVAL', 'DRAFT']).count(),
             'under_procurement': Requisition.objects.filter(status='UNDER_REVIEW').count(),
             'quotations': QuotationRequest.objects.filter(status='OPEN').count(),
-            'technical_evaluation': Quotation.objects.filter(status='UNDER_REVIEW').count(),
+            'technical_evaluation': tech_eval_count,
             'committee_review': pending_committee_review_count,
             'purchase_order': PurchaseOrder.objects.filter(status='ISSUED').count(),
             'delivery': pending_deliveries_count,
@@ -462,10 +472,20 @@ class ProcurementCommitteeDashboardView(APIView):
         completed_decisions_count = approved_cases_count + rejected_cases_count
 
         # 2. Workflow Pipeline Stages
+        committee_tech_eval_count = Quotation.objects.filter(
+            status='UNDER_REVIEW',
+            quotation_request__requisition__requires_technical_evaluation=True
+        ).count()
+        if committee_tech_eval_count == 0:
+            committee_tech_eval_count = Requisition.objects.filter(
+                status='UNDER_REVIEW',
+                requires_technical_evaluation=True
+            ).count()
+
         pipeline = {
             'department_staff': Requisition.objects.filter(status__in=['DRAFT', 'PENDING_APPROVAL']).count(),
             'purchase_officer': QuotationRequest.objects.filter(status='OPEN').count(),
-            'technical_evaluation': Quotation.objects.filter(status='UNDER_REVIEW').count(),
+            'technical_evaluation': committee_tech_eval_count,
             'procurement_committee': pending_committee_reviews_count,
             'purchase_order': PurchaseOrder.objects.filter(status='ISSUED').count(),
             'vendor_delivery': Delivery.objects.filter(status__in=['DISPATCHED', 'IN_TRANSIT']).count(),
@@ -477,24 +497,33 @@ class ProcurementCommitteeDashboardView(APIView):
         ).select_related('department', 'requested_by').order_by('-created_at')[:10]
 
         pending_reviews = []
+        review_queue = []
         for req in pending_reviews_qs:
-            # Check if there are quotations or technical evaluation status
-            tech_eval_status = 'Pending Evaluation'
-            if req.quotation_requests.exists():
-                first_rfq = req.quotation_requests.first()
-                if first_rfq.quotations.filter(status='APPROVED').exists():
-                    tech_eval_status = 'Technically Compliant'
-                elif first_rfq.quotations.filter(status='UNDER_REVIEW').exists():
-                    tech_eval_status = 'Under Evaluation'
-                elif first_rfq.quotations.exists():
-                    tech_eval_status = 'Bids Received'
+            # Check if technical evaluation is required based on item complexity
+            if not req.requires_technical_evaluation:
+                tech_eval_status = 'Not Required'
+                tech_eval_result = 'Not Required'
+            else:
+                tech_eval_status = 'Pending Evaluation'
+                tech_eval_result = 'Pending Technical Review'
+                if req.quotation_requests.exists():
+                    first_rfq = req.quotation_requests.first()
+                    if first_rfq.quotations.filter(status='APPROVED').exists():
+                        tech_eval_status = 'Technically Compliant'
+                        tech_eval_result = 'Recommended for Approval'
+                    elif first_rfq.quotations.filter(status='UNDER_REVIEW').exists():
+                        tech_eval_status = 'Under Evaluation'
+                        tech_eval_result = 'Under Evaluation'
+                    elif first_rfq.quotations.exists():
+                        tech_eval_status = 'Bids Received'
+                        tech_eval_result = 'Bids Received'
 
             pending_reviews.append({
                 'id': req.id,
                 'req_number': req.req_number,
                 'title': req.title,
                 'department_name': req.department.name if req.department else 'N/A',
-                'category': 'Medical & Hospital Supplies',
+                'category': req.category or (req.department.name if req.department else 'General Supplies'),
                 'submitted_by_name': req.requested_by.get_full_name() or req.requested_by.username if req.requested_by else 'N/A',
                 'submission_date': req.created_at.isoformat(),
                 'priority': req.priority,
@@ -504,19 +533,18 @@ class ProcurementCommitteeDashboardView(APIView):
                 'justification': req.justification,
             })
 
-        # 4. Committee Review Queue (latest 8)
-        review_queue = []
-        for req in pending_reviews_qs[:8]:
-            review_queue.append({
-                'id': req.id,
-                'req_number': req.req_number,
-                'department_name': req.department.name if req.department else 'N/A',
-                'submitted_by': req.requested_by.get_full_name() or req.requested_by.username if req.requested_by else 'N/A',
-                'technical_evaluation_result': 'Recommended for Approval' if req.status == 'UNDER_REVIEW' else 'Pending Review',
-                'priority': req.priority,
-                'status': 'Pending Committee Review' if req.status == 'UNDER_REVIEW' else 'Pending Procurement Review',
-                'estimated_budget': str(req.estimated_budget) if req.estimated_budget is not None else None,
-            })
+            # Add to review queue (up to 8 items)
+            if len(review_queue) < 8:
+                review_queue.append({
+                    'id': req.id,
+                    'req_number': req.req_number,
+                    'department_name': req.department.name if req.department else 'N/A',
+                    'submitted_by': req.requested_by.get_full_name() or req.requested_by.username if req.requested_by else 'N/A',
+                    'technical_evaluation_result': tech_eval_result,
+                    'priority': req.priority,
+                    'status': 'Pending Committee Review' if req.status == 'UNDER_REVIEW' else 'Pending Procurement Review',
+                    'estimated_budget': str(req.estimated_budget) if req.estimated_budget is not None else None,
+                })
 
         # 5. Recent Committee Decisions (latest 8)
         recent_decisions = []
@@ -620,18 +648,36 @@ class TechnicalOfficerDashboardView(APIView):
             'technical_specializations': specializations,
         }
 
-        # 1. Technical Evaluation Statistics (6 cards)
-        assigned_evaluations_count = Quotation.objects.filter(status='UNDER_REVIEW').count()
+        # 1. Technical Evaluation Statistics (6 cards) - Only for technical procurements
+        assigned_evaluations_count = Quotation.objects.filter(
+            status='UNDER_REVIEW',
+            quotation_request__requisition__requires_technical_evaluation=True
+        ).count()
         if assigned_evaluations_count == 0:
-            assigned_evaluations_count = Requisition.objects.filter(status='UNDER_REVIEW').count()
+            assigned_evaluations_count = Requisition.objects.filter(
+                status='UNDER_REVIEW',
+                requires_technical_evaluation=True
+            ).count()
 
-        pending_reviews_count = Quotation.objects.filter(status='SUBMITTED').count()
+        pending_reviews_count = Quotation.objects.filter(
+            status='SUBMITTED',
+            quotation_request__requisition__requires_technical_evaluation=True
+        ).count()
         if pending_reviews_count == 0:
-            pending_reviews_count = Requisition.objects.filter(status='PENDING_APPROVAL').count()
+            pending_reviews_count = Requisition.objects.filter(
+                status='PENDING_APPROVAL',
+                requires_technical_evaluation=True
+            ).count()
 
         in_progress_evaluations_count = assigned_evaluations_count
-        compliance_approved_count = Quotation.objects.filter(status='APPROVED').count()
-        compliance_rejected_count = Quotation.objects.filter(status='REJECTED').count()
+        compliance_approved_count = Quotation.objects.filter(
+            status='APPROVED',
+            quotation_request__requisition__requires_technical_evaluation=True
+        ).count()
+        compliance_rejected_count = Quotation.objects.filter(
+            status='REJECTED',
+            quotation_request__requisition__requires_technical_evaluation=True
+        ).count()
         completed_evaluations_count = compliance_approved_count + compliance_rejected_count
 
         # 2. Workflow Pipeline Stages
@@ -644,17 +690,30 @@ class TechnicalOfficerDashboardView(APIView):
         }
 
         # 3. Assigned Technical Evaluations (Primary Dashboard Table - latest 10)
-        # Pull from quotations in review or open requisitions
+        # Pull from quotations in review or open requisitions that require technical expertise
         quotes_qs = Quotation.objects.filter(
-            status__in=['UNDER_REVIEW', 'SUBMITTED']
+            status__in=['UNDER_REVIEW', 'SUBMITTED'],
+            quotation_request__requisition__requires_technical_evaluation=True
         ).select_related(
             'quotation_request', 'vendor', 'quotation_request__requisition', 'quotation_request__requisition__department'
-        ).order_by('-created_at')[:10]
+        ).order_by('-created_at')
+
+        # If officer has specific specializations, prioritize evaluations matching those specializations
+        if specializations:
+            filtered_quotes = quotes_qs.filter(
+                quotation_request__requisition__technical_specialization__in=specializations
+            )
+            if filtered_quotes.exists():
+                quotes_qs = filtered_quotes
+
+        quotes_qs = quotes_qs[:10]
 
         assigned_evaluations = []
         for q in quotes_qs:
             req = q.quotation_request.requisition if q.quotation_request else None
-            spec_category = specializations[0] if specializations else 'Medical & Technical Equipment'
+            spec_category = req.technical_specialization if req and req.technical_specialization else (
+                specializations[0] if specializations else 'Biomedical Equipment'
+            )
             assigned_evaluations.append({
                 'id': q.id,
                 'evaluation_ref': f"TE-{q.quotation_number}",
@@ -670,13 +729,21 @@ class TechnicalOfficerDashboardView(APIView):
                 'justification': req.justification if req else None,
             })
 
-        # If no explicit quotation in review yet, check Requisitions in review
+        # If no explicit quotation in review yet, check Requisitions in review that require technical expertise
         if not assigned_evaluations:
             reqs_qs = Requisition.objects.filter(
-                status__in=['UNDER_REVIEW', 'PENDING_APPROVAL']
-            ).select_related('department', 'requested_by').order_by('-created_at')[:10]
+                status__in=['UNDER_REVIEW', 'PENDING_APPROVAL'],
+                requires_technical_evaluation=True
+            ).select_related('department', 'requested_by').order_by('-created_at')
+
+            if specializations:
+                filtered_reqs = reqs_qs.filter(technical_specialization__in=specializations)
+                if filtered_reqs.exists():
+                    reqs_qs = filtered_reqs
+
+            reqs_qs = reqs_qs[:10]
             for r in reqs_qs:
-                spec_category = specializations[0] if specializations else 'Biomedical & Laboratory'
+                spec_category = r.technical_specialization or (specializations[0] if specializations else 'Biomedical Equipment')
                 assigned_evaluations.append({
                     'id': r.id,
                     'evaluation_ref': f"TE-{r.req_number}",

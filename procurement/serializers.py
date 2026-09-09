@@ -24,7 +24,8 @@ class RequisitionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Requisition
         fields = [
-            'id', 'req_number', 'title', 'department', 'department_details',
+            'id', 'req_number', 'title', 'category', 'requires_technical_evaluation',
+            'technical_specialization', 'department', 'department_details',
             'requested_by', 'requested_by_details', 'priority', 'estimated_budget',
             'status', 'justification', 'approvals', 'created_at', 'updated_at'
         ]

@@ -24,21 +24,18 @@ import {
 } from 'react-icons/hi';
 
 const HOSPITAL_DEPARTMENTS = [
-  'Cardiology',
-  'Neurology',
-  'Orthopedics',
-  'General Medicine',
-  'General Surgery',
-  'Pediatrics',
-  'Obstetrics & Gynecology',
-  'Emergency & Trauma',
-  'Intensive Care Unit (ICU)',
-  'Radiology & Imaging',
-  'Pathology & Laboratory',
-  'Operation Theatre (OT)',
+  'Medical & Surgical Equipment',
   'Biomedical Engineering',
+  'Laboratory & Diagnostic Services',
+  'Radiology & Imaging',
+  'Medical Consumables',
+  'Critical Care & Emergency Services',
+  'Operation Theatre & Sterilization',
   'Facilities & Maintenance',
-  'Information Technology'
+  'Housekeeping & Laundry',
+  'IT & Digital Services',
+  'Furniture, Office & General Supplies',
+  'Central Stores & Logistics'
 ];
 
 const UserManagementPage = () => {
@@ -122,6 +119,12 @@ const UserManagementPage = () => {
 
     setSubmitting(true);
     try {
+      let createDeptId = data.department ? parseInt(data.department, 10) : null;
+      if (isNaN(createDeptId) || !createDeptId) {
+        const found = departments.find(d => d.name?.toLowerCase() === String(data.department).toLowerCase());
+        createDeptId = found ? found.id : null;
+      }
+
       const payload = {
         employee_id: data.employee_id,
         username: data.username,
@@ -131,7 +134,7 @@ const UserManagementPage = () => {
         date_of_birth: data.date_of_birth || null,
         gender: data.gender || null,
         phone: data.phone,
-        department: data.department ? parseInt(data.department) : null,
+        department: createDeptId,
         role: currentRoleObj ? currentRoleObj.id : null,
         is_active: true,
         first_login: true
@@ -172,18 +175,19 @@ const UserManagementPage = () => {
     setSubmitting(true);
 
     try {
+      let deptId = data.department ? parseInt(data.department, 10) : null;
+      if (isNaN(deptId)) {
+        const found = departments.find(d => d.name?.toLowerCase() === String(data.department).toLowerCase());
+        deptId = found ? found.id : null;
+      }
+
+      // Strictly allow Admin to edit ONLY the assigned Department
       const payload = {
-        first_name: data.first_name,
-        last_name: data.last_name,
-        date_of_birth: data.date_of_birth || null,
-        gender: data.gender || null,
-        email: data.email,
-        phone: data.phone,
-        department: data.department ? parseInt(data.department) : null,
+        department: deptId,
       };
 
       await axiosClient.patch(`/accounts/users/${selectedUser.id}/`, payload);
-      setActionSuccess(`Staff details updated for ${selectedUser.username}!`);
+      setActionSuccess(`Department assignment updated successfully for ${selectedUser.username}!`);
       setEditModalOpen(false);
       setSelectedUser(null);
       fetchUsersData();
@@ -193,7 +197,7 @@ const UserManagementPage = () => {
         if (typeof errData === 'string') setActionError(errData);
         else setActionError(Object.values(errData).flat().join(' '));
       } else {
-        setActionError('Failed to update staff account.');
+        setActionError('Failed to update staff department.');
       }
     } finally {
       setSubmitting(false);
@@ -221,17 +225,16 @@ const UserManagementPage = () => {
     }
   };
 
-  // Open Edit Modal with user data
+  // Open Edit Modal with user data (Department Only)
   const openEditModal = (user) => {
     setSelectedUser(user);
+    const userDeptId = typeof user.department === 'object' && user.department !== null
+      ? user.department.id
+      : (typeof user.department === 'number'
+          ? user.department
+          : (departments.find(d => d.name?.toLowerCase() === String(user.department || '').toLowerCase())?.id || ''));
     resetEdit({
-      first_name: user.first_name || '',
-      last_name: user.last_name || '',
-      date_of_birth: user.date_of_birth || '',
-      gender: user.gender || '',
-      email: user.email || '',
-      phone: user.phone || '',
-      department: user.department?.id || user.department || ''
+      department: userDeptId || ''
     });
     setEditModalOpen(true);
   };
@@ -726,58 +729,70 @@ const UserManagementPage = () => {
               </div>
 
               <form onSubmit={handleSubmitEdit(handleEditStaff)} className="space-y-4 text-xs">
+                <div className="p-3 bg-violet-50/70 border border-violet-100 rounded-2xl text-[11px] text-violet-800 flex items-center gap-2">
+                  <HiShieldCheck className="w-4 h-4 text-violet-600 flex-shrink-0" />
+                  <span>Profile details and account identifiers are read-only. Only the assigned Department can be modified.</span>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <InputField
                     label="First Name"
-                    {...registerEdit('first_name')}
+                    value={selectedUser.first_name || ''}
+                    disabled
+                    readOnly
+                    className="bg-slate-100/70 text-slate-500 cursor-not-allowed"
                   />
                   <InputField
                     label="Last Name"
-                    {...registerEdit('last_name')}
+                    value={selectedUser.last_name || ''}
+                    disabled
+                    readOnly
+                    className="bg-slate-100/70 text-slate-500 cursor-not-allowed"
                   />
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <InputField
-                    label="Date of Birth (DOB)"
-                    type="date"
-                    {...registerEdit('date_of_birth')}
+                    label="Employee ID"
+                    value={selectedUser.employee_id || 'N/A'}
+                    disabled
+                    readOnly
+                    className="bg-slate-100/70 text-slate-500 cursor-not-allowed"
                   />
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Gender
-                    </label>
-                    <select
-                      {...registerEdit('gender')}
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
-                    >
-                      <option value="">Select Gender...</option>
-                      <option value="Male">Male</option>
-                      <option value="Female">Female</option>
-                    </select>
-                  </div>
+                  <InputField
+                    label="Username"
+                    value={`@${selectedUser.username || ''}`}
+                    disabled
+                    readOnly
+                    className="bg-slate-100/70 text-slate-500 cursor-not-allowed"
+                  />
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <InputField
                     label="Email Address"
                     type="email"
-                    {...registerEdit('email')}
+                    value={selectedUser.email || 'N/A'}
+                    disabled
+                    readOnly
+                    className="bg-slate-100/70 text-slate-500 cursor-not-allowed"
                   />
                   <InputField
                     label="Phone Number"
-                    {...registerEdit('phone')}
+                    value={selectedUser.phone || 'N/A'}
+                    disabled
+                    readOnly
+                    className="bg-slate-100/70 text-slate-500 cursor-not-allowed"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Hospital Department
+                    Hospital Department <span className="text-violet-600 font-bold">*</span>
                   </label>
                   <select
-                    {...registerEdit('department')}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
+                    {...registerEdit('department', { required: 'Please select a department' })}
+                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
                   >
                     <option value="">Select Department...</option>
                     {HOSPITAL_DEPARTMENTS.map((deptName) => {
@@ -789,6 +804,9 @@ const UserManagementPage = () => {
                       );
                     })}
                   </select>
+                  {errorsEdit.department && (
+                    <p className="text-xs text-rose-600 mt-1 font-medium">{errorsEdit.department.message}</p>
+                  )}
                 </div>
 
                 <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-100">

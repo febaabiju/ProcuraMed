@@ -103,7 +103,7 @@ const TechnicalOfficerDashboardPage = () => {
   const employeeId = data.user?.employee_id || 'TO101';
   const specializationsList = data.specializations.length > 0
     ? data.specializations
-    : (data.user?.technical_specializations || ['Biomedical & Medical Devices']);
+    : (data.user?.technical_specializations || ['Biomedical Equipment']);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return 'N/A';

@@ -10,7 +10,8 @@ class IsAdminRole(BasePermission):
             return False
         if request.user.is_superuser or request.user.is_staff:
             return True
-        return bool(request.user.role and request.user.role.name.lower() == 'admin')
+        return bool(request.user.role and request.user.role.name.lower() in ['admin', 'system administrator'])
+
 
 
 class IsDepartmentStaff(BasePermission):

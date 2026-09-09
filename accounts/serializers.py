@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import Role, Department, User, AuditLog
+from .models import Role, Department, User, AuditLog, SystemSetting
 
 
 class RoleSerializer(serializers.ModelSerializer):
@@ -208,3 +208,47 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'is_superuser': self.user.is_superuser,
         }
         return data
+
+
+class SystemSettingSerializer(serializers.ModelSerializer):
+    updated_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SystemSetting
+        fields = [
+            'id',
+            'hospital_name',
+            'hospital_email',
+            'hospital_phone',
+            'hospital_address',
+            'min_password_length',
+            'session_timeout',
+            'require_password_change',
+            'email_notifications',
+            'vendor_approval_emails',
+            'vendor_rejection_emails',
+            'new_user_credential_emails',
+            'enable_purchase_requisition',
+            'enable_vendor_quotations',
+            'enable_purchase_order_processing',
+            'updated_at',
+            'updated_by',
+            'updated_by_name',
+        ]
+        read_only_fields = ['id', 'updated_at', 'updated_by', 'updated_by_name']
+
+    def get_updated_by_name(self, obj):
+        if obj.updated_by:
+            return obj.updated_by.get_full_name() or obj.updated_by.username
+        return None
+
+    def validate_min_password_length(self, value):
+        if value < 4 or value > 32:
+            raise serializers.ValidationError("Minimum password length must be between 4 and 32 characters.")
+        return value
+
+    def validate_session_timeout(self, value):
+        if value < 5 or value > 1440:
+            raise serializers.ValidationError("Session timeout must be between 5 and 1440 minutes.")
+        return value
+

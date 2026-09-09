@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, views
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -8,11 +8,11 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 
 from rest_framework.pagination import PageNumberPagination
 
-from .models import Role, Department, User, AuditLog
+from .models import Role, Department, User, AuditLog, SystemSetting
 from .serializers import (
     RoleSerializer, DepartmentSerializer, UserSerializer, 
     UserCreateUpdateSerializer, AuditLogSerializer, CustomTokenObtainPairSerializer,
-    ChangePasswordSerializer
+    ChangePasswordSerializer, SystemSettingSerializer
 )
 from .permissions import IsAdminRole, IsAdminOrReadOnly
 from .filters import UserFilter, RoleFilter, DepartmentFilter, AuditLogFilter
@@ -368,3 +368,35 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['action', 'module', 'description', 'ip_address', 'user__username']
     ordering_fields = ['id', 'created_at']
     ordering = ['-created_at', '-id']
+
+
+class SystemSettingsView(views.APIView):
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        settings_obj = SystemSetting.get_settings()
+        serializer = SystemSettingSerializer(settings_obj)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def put(self, request):
+        settings_obj = SystemSetting.get_settings()
+        serializer = SystemSettingSerializer(settings_obj, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save(updated_by=request.user)
+            # Create audit log record
+            AuditLog.objects.create(
+                user=request.user,
+                action='System Settings Updated',
+                module='System Management',
+                description=f"System administrator '{request.user.username}' updated global system settings.",
+                ip_address=request.META.get('REMOTE_ADDR')
+            )
+            return Response({
+                'message': 'System settings saved successfully.',
+                'settings': serializer.data
+            }, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def patch(self, request):
+        return self.put(request)
+

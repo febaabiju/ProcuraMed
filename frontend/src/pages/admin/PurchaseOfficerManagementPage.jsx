@@ -471,13 +471,6 @@ const PurchaseOfficerManagementPage = () => {
                             <HiEye className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => openEditModal(u)}
-                            title="Edit Staff"
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors inline-flex items-center justify-center"
-                          >
-                            <HiPencil className="w-4 h-4" />
-                          </button>
-                          <button
                             onClick={() => openToggleModal(u)}
                             title={u.is_active ? 'Deactivate Account' : 'Activate Account'}
                             className={`p-1.5 rounded-lg transition-colors inline-flex items-center justify-center ${

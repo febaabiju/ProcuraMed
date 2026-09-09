@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from .models import Role, Department, User, AuditLog
+from .models import Role, Department, User, AuditLog, SystemSetting
 
 
 @admin.register(Role)
@@ -45,3 +45,9 @@ class AuditLogAdmin(admin.ModelAdmin):
     search_fields = ('action', 'module', 'description', 'ip_address', 'user__username')
     readonly_fields = ('user', 'action', 'module', 'description', 'ip_address', 'created_at')
     ordering = ('-created_at',)
+
+
+@admin.register(SystemSetting)
+class SystemSettingAdmin(admin.ModelAdmin):
+    list_display = ('id', 'hospital_name', 'hospital_email', 'hospital_phone', 'updated_at', 'updated_by')
+    readonly_fields = ('updated_at',)

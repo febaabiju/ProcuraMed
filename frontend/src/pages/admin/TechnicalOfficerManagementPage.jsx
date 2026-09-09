@@ -18,20 +18,17 @@ import {
   HiMail,
   HiFilter,
   HiX,
-  HiCheck
+  HiCheck,
+  HiShieldCheck
 } from 'react-icons/hi';
 
 export const TECHNICAL_SPECIALIZATIONS = [
-  'Medical Equipment & Devices',
   'Biomedical Equipment',
-  'Laboratory Equipment',
-  'Radiology & Imaging Equipment',
-  'Surgical & Operation Theatre Equipment',
-  'ICU & Critical Care Equipment',
-  'IT & Digital Systems',
-  'Electrical & Electronic Equipment',
-  'Facilities & HVAC Equipment',
-  'General Technical Equipment'
+  'Medical & Surgical Equipment',
+  'Laboratory & Diagnostic Equipment',
+  'Radiology & Medical Imaging',
+  'Critical Care & Life-Support Equipment',
+  'IT & Healthcare Technology'
 ];
 
 const TechnicalOfficerManagementPage = () => {
@@ -191,17 +188,11 @@ const TechnicalOfficerManagementPage = () => {
     setSubmitting(true);
     try {
       const payload = {
-        first_name: data.first_name.trim(),
-        last_name: data.last_name.trim(),
-        date_of_birth: data.date_of_birth || null,
-        gender: data.gender || null,
-        email: data.email.trim(),
-        phone: data.phone ? data.phone.trim() : '',
         technical_specializations: editSpecs,
       };
 
       await axiosClient.patch(`/accounts/users/${selectedUser.id}/`, payload);
-      setActionSuccess(`Technical officer details updated for ${selectedUser.username}!`);
+      setActionSuccess(`Technical officer specialization updated for ${selectedUser.username}!`);
       setEditModalOpen(false);
       setSelectedUser(null);
       fetchUsersData();
@@ -211,7 +202,7 @@ const TechnicalOfficerManagementPage = () => {
         if (typeof errData === 'string') setActionError(errData);
         else setActionError(Object.values(errData).flat().join(' '));
       } else {
-        setActionError('Failed to update technical officer account.');
+        setActionError('Failed to update technical officer specialization.');
       }
     } finally {
       setSubmitting(false);
@@ -243,14 +234,6 @@ const TechnicalOfficerManagementPage = () => {
   const openEditModal = (user) => {
     setSelectedUser(user);
     setEditSpecs(Array.isArray(user.technical_specializations) ? user.technical_specializations : []);
-    resetEdit({
-      first_name: user.first_name || '',
-      last_name: user.last_name || '',
-      date_of_birth: user.date_of_birth || '',
-      gender: user.gender || '',
-      email: user.email || '',
-      phone: user.phone || ''
-    });
     setEditModalOpen(true);
   };
 
@@ -794,52 +777,83 @@ const TechnicalOfficerManagementPage = () => {
                 </button>
               </div>
 
-              <form onSubmit={handleSubmitEdit(handleEditOfficer)} className="space-y-4 text-xs">
+              <form onSubmit={(e) => { e.preventDefault(); handleEditOfficer(); }} className="space-y-4 text-xs">
+                {/* Read-Only Notice Banner */}
+                <div className="p-3 bg-violet-50/70 border border-violet-100 rounded-2xl text-[11px] text-violet-800 flex items-center gap-2">
+                  <HiShieldCheck className="w-4 h-4 text-violet-600 flex-shrink-0" />
+                  <span>Profile details and account identifiers are read-only. Only the Technical Specialization can be modified.</span>
+                </div>
+
+                {/* Name Details (Read-only) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <InputField
-                    label="First Name *"
-                    {...registerEdit('first_name', { required: 'First name is required' })}
-                    error={errorsEdit.first_name?.message}
+                    label="First Name"
+                    value={selectedUser.first_name || ''}
+                    disabled
+                    readOnly
+                    className="bg-slate-100/70 text-slate-500 cursor-not-allowed"
                   />
                   <InputField
-                    label="Last Name *"
-                    {...registerEdit('last_name', { required: 'Last name is required' })}
-                    error={errorsEdit.last_name?.message}
+                    label="Last Name"
+                    value={selectedUser.last_name || ''}
+                    disabled
+                    readOnly
+                    className="bg-slate-100/70 text-slate-500 cursor-not-allowed"
                   />
                 </div>
 
+                {/* Account Identifiers (Read-only) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <InputField
-                    label="Date of Birth"
-                    type="date"
-                    {...registerEdit('date_of_birth')}
+                    label="Employee ID"
+                    value={selectedUser.employee_id || 'N/A'}
+                    disabled
+                    readOnly
+                    className="bg-slate-100/70 text-slate-500 cursor-not-allowed"
                   />
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                      Gender
-                    </label>
-                    <select
-                      {...registerEdit('gender')}
-                      className="w-full px-3.5 py-3 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
-                    >
-                      <option value="">Select Gender...</option>
-                      <option value="Male">Male</option>
-                      <option value="Female">Female</option>
-                    </select>
-                  </div>
+                  <InputField
+                    label="Username"
+                    value={`@${selectedUser.username || ''}`}
+                    disabled
+                    readOnly
+                    className="bg-slate-100/70 text-slate-500 cursor-not-allowed"
+                  />
                 </div>
 
+                {/* Contact Information (Read-only) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <InputField
-                    label="Email Address *"
+                    label="Email Address"
                     type="email"
-                    {...registerEdit('email', { required: 'Email address is required' })}
-                    error={errorsEdit.email?.message}
+                    value={selectedUser.email || 'N/A'}
+                    disabled
+                    readOnly
+                    className="bg-slate-100/70 text-slate-500 cursor-not-allowed"
                   />
                   <InputField
                     label="Phone Number"
-                    {...registerEdit('phone')}
+                    value={selectedUser.phone || 'N/A'}
+                    disabled
+                    readOnly
+                    className="bg-slate-100/70 text-slate-500 cursor-not-allowed"
+                  />
+                </div>
+
+                {/* Personal Information (Read-only) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <InputField
+                    label="Date of Birth"
+                    value={selectedUser.date_of_birth || 'N/A'}
+                    disabled
+                    readOnly
+                    className="bg-slate-100/70 text-slate-500 cursor-not-allowed"
+                  />
+                  <InputField
+                    label="Gender"
+                    value={selectedUser.gender || 'N/A'}
+                    disabled
+                    readOnly
+                    className="bg-slate-100/70 text-slate-500 cursor-not-allowed"
                   />
                 </div>
 
@@ -853,6 +867,9 @@ const TechnicalOfficerManagementPage = () => {
                       {editSpecs.length} selected
                     </span>
                   </div>
+                  <p className="text-[11px] text-slate-500">
+                    Select all categories this Technical Officer is qualified to evaluate:
+                  </p>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 max-h-48 overflow-y-auto p-2 bg-slate-50 rounded-2xl border border-slate-200/80">
                     {TECHNICAL_SPECIALIZATIONS.map((spec) => {
