@@ -1,3 +1,4 @@
+import re
 from rest_framework import serializers
 from .models import SupplierCategory, VendorApplication, Vendor
 from accounts.serializers import UserSerializer
@@ -10,6 +11,13 @@ class SupplierCategorySerializer(serializers.ModelSerializer):
 
 
 class VendorApplicationSerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(required=False, allow_blank=True)
+    contact_person = serializers.CharField(required=False, allow_blank=True)
+    email = serializers.CharField(required=False, allow_blank=True)
+    phone = serializers.CharField(required=False, allow_blank=True)
+    address = serializers.CharField(required=False, allow_blank=True)
+    products_services_offered = serializers.CharField(required=False, allow_blank=True)
+    certificate_file = serializers.FileField(required=False, allow_null=True)
     supplier_categories = serializers.PrimaryKeyRelatedField(
         queryset=SupplierCategory.objects.all(),
         many=True,
@@ -40,6 +48,149 @@ class VendorApplicationSerializer(serializers.ModelSerializer):
             'vendor_code', 'is_active'
         ]
         read_only_fields = ['id', 'application_code', 'status', 'admin_remarks', 'submitted_at', 'reviewed_at', 'reviewed_by']
+
+    def validate_company_name(self, value):
+        val = (value or '').strip()
+        if not val:
+            raise serializers.ValidationError("Company name is required.")
+        return val
+
+    def validate_contact_person(self, value):
+        val = (value or '').strip()
+        if not val:
+            raise serializers.ValidationError("Contact person name is required.")
+        return val
+
+    def validate_email(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("Email address is required.")
+        if any(c.isupper() for c in value):
+            raise serializers.ValidationError("Email must be in lowercase and end with @gmail.com.")
+        if not re.match(r'^[a-z0-9._%+-]+@gmail\.com$', value):
+            raise serializers.ValidationError("Email must be a valid Gmail address ending with @gmail.com.")
+        return value
+
+    def validate_phone(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("Phone number is required.")
+        if not re.match(r'^\d{10}$', value):
+            raise serializers.ValidationError("Phone number must contain exactly 10 digits.")
+        return value
+
+    def validate_address(self, value):
+        val = (value or '').strip()
+        if not val:
+            raise serializers.ValidationError("Company address is required.")
+        return val
+
+    def validate_products_services_offered(self, value):
+        val = (value or '').strip()
+        if not val:
+            raise serializers.ValidationError("Products / Services offered description is required.")
+        return val
+
+    def validate_supplier_categories(self, value):
+        if not value or len(value) == 0:
+            raise serializers.ValidationError("At least one supplier category must be selected.")
+        return value
+
+    def validate_certificate_file(self, value):
+        if not value:
+            raise serializers.ValidationError("Business License / Registration Certificate is required.")
+        
+        name = getattr(value, 'name', '') or ''
+        if not name.lower().endswith('.pdf'):
+            raise serializers.ValidationError("Only PDF files (.pdf) are allowed for the Business License / Registration Certificate.")
+        
+        content_type = getattr(value, 'content_type', '') or ''
+        if content_type and content_type.lower() not in [
+            'application/pdf', 'application/x-pdf', 'application/acrobat', 
+            'applications/vnd.pdf', 'text/pdf', 'text/x-pdf'
+        ]:
+            raise serializers.ValidationError("Only PDF files (.pdf) with valid PDF MIME type are allowed.")
+        
+        # Verify actual file contents begin with the PDF signature %PDF-
+        try:
+            value.seek(0)
+            header = value.read(5)
+            value.seek(0)
+            if not header.startswith(b'%PDF-'):
+                raise serializers.ValidationError("The uploaded file does not have a valid PDF signature (%PDF-). Spoofed or non-PDF files are not allowed.")
+        except serializers.ValidationError:
+            raise
+        except Exception:
+            raise serializers.ValidationError("Unable to verify the uploaded certificate file format. Please upload a valid PDF document.")
+        
+        return value
+
+    def to_internal_value(self, data):
+        errors = {}
+        if self.instance is None:
+            required_fields = {
+                'company_name': 'Company name',
+                'contact_person': 'Contact person name',
+                'email': 'Email address',
+                'phone': 'Phone number',
+                'address': 'Company address',
+                'products_services_offered': 'Products / Services offered description',
+            }
+            for field, label in required_fields.items():
+                val = data.get(field) if hasattr(data, 'get') else None
+                if val is None or (isinstance(val, str) and not val.strip()):
+                    errors[field] = f"{label} is required."
+
+            # Check certificate file presence
+            cert = data.get('certificate_file') if hasattr(data, 'get') else None
+            if not cert:
+                errors['certificate_file'] = "Business License / Registration Certificate is required."
+
+            # Check supplier categories presence
+            cats = None
+            if hasattr(data, 'getlist'):
+                cats = data.getlist('supplier_categories')
+            elif hasattr(data, 'get'):
+                cats = data.get('supplier_categories')
+            if not cats or len(cats) == 0:
+                errors['supplier_categories'] = "At least one supplier category must be selected."
+
+        try:
+            ret = super().to_internal_value(data)
+        except serializers.ValidationError as exc:
+            for k, v in exc.detail.items():
+                errors[k] = v
+
+        if errors:
+            raise serializers.ValidationError(errors)
+        return ret
+
+    def validate(self, attrs):
+        if self.instance is None:
+            required_fields = {
+                'company_name': 'Company name',
+                'contact_person': 'Contact person name',
+                'email': 'Email address',
+                'phone': 'Phone number',
+                'address': 'Company address',
+                'products_services_offered': 'Products / Services description',
+            }
+            errors = {}
+            for field, label in required_fields.items():
+                val = attrs.get(field)
+                if val is None or (isinstance(val, str) and not val.strip()):
+                    errors[field] = f"{label} is required."
+
+            categories = attrs.get('supplier_categories')
+            if not categories or len(categories) == 0:
+                errors['supplier_categories'] = "At least one supplier category must be selected."
+
+            cert = attrs.get('certificate_file')
+            if not cert:
+                errors['certificate_file'] = "Business License / Registration Certificate is required."
+
+            if errors:
+                raise serializers.ValidationError(errors)
+
+        return attrs
 
     def get_application_code(self, obj):
         year = obj.submitted_at.strftime('%Y') if obj.submitted_at else '2026'

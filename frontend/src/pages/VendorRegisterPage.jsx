@@ -4,6 +4,7 @@ import { Link, Navigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import axiosClient from '../api/axiosClient';
+import { VENDOR_VALIDATION_RULES } from '../utils/vendorValidation';
 import {
   HiShieldCheck as IconShield,
   HiUser as IconUser,
@@ -37,7 +38,16 @@ const DEFAULT_CATEGORIES = [
 ];
 
 const VendorRegisterPage = () => {
-  const { register, handleSubmit, formState: { errors } } = useForm();
+  const {
+    register,
+    handleSubmit,
+    setError,
+    clearErrors,
+    formState: { errors }
+  } = useForm({
+    mode: 'onSubmit',
+    reValidateMode: 'onChange'
+  });
   const { submitVendorApplication, loading, isAuthenticated, isAdmin, isVendor, user } = useAuth();
 
   // If already authenticated, automatically redirect to appropriate dashboard
@@ -50,6 +60,7 @@ const VendorRegisterPage = () => {
     }
   }
   const [apiError, setApiError] = useState('');
+  const [catError, setCatError] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [applicationData, setApplicationData] = useState(null);
   const [fileName, setFileName] = useState('');
@@ -79,49 +90,96 @@ const VendorRegisterPage = () => {
   }, []);
 
   const toggleCategory = (catId) => {
+    let updated;
     if (selectedCategories.includes(catId)) {
-      setSelectedCategories(selectedCategories.filter(id => id !== catId));
+      updated = selectedCategories.filter(id => id !== catId);
     } else {
-      setSelectedCategories([...selectedCategories, catId]);
+      updated = [...selectedCategories, catId];
+    }
+    setSelectedCategories(updated);
+    if (updated.length > 0) {
+      setCatError('');
     }
   };
 
   const onSubmit = async (data) => {
     setApiError('');
+    
+    // Category validation
     if (selectedCategories.length === 0) {
-      setApiError('Please select at least one supplier category.');
+      setCatError('At least one supplier category must be selected.');
+      return;
+    } else {
+      setCatError('');
+    }
+
+    // Certificate file validation
+    if (!data.certificate_file || !data.certificate_file[0]) {
+      setError('certificate_file', {
+        type: 'manual',
+        message: 'Business License / Registration Certificate is required'
+      });
       return;
     }
 
-    if (!data.certificate_file || !data.certificate_file[0]) {
-      setApiError('Please upload your Business License / Registration Certificate.');
+    const file = data.certificate_file[0];
+    const fileNameLower = (file.name || '').toLowerCase();
+    if (!fileNameLower.endsWith('.pdf')) {
+      setError('certificate_file', {
+        type: 'manual',
+        message: 'Only PDF files (.pdf) are allowed for the certificate'
+      });
       return;
     }
 
     const formData = new FormData();
-    formData.append('company_name', data.company_name);
-    formData.append('contact_person', data.contact_person);
-    formData.append('email', data.email);
-    formData.append('phone', data.phone);
-    formData.append('address', data.address);
-    formData.append('products_services_offered', data.products_services_offered);
+    formData.append('company_name', (data.company_name || '').trim());
+    formData.append('contact_person', (data.contact_person || '').trim());
+    formData.append('email', (data.email || '').trim());
+    formData.append('phone', (data.phone || '').trim());
+    formData.append('address', (data.address || '').trim());
+    formData.append('products_services_offered', (data.products_services_offered || '').trim());
 
     selectedCategories.forEach(catId => {
       formData.append('supplier_categories', catId);
     });
 
-    if (data.certificate_file && data.certificate_file[0]) {
-      formData.append('certificate_file', data.certificate_file[0]);
-    }
+    formData.append('certificate_file', file);
 
     const result = await submitVendorApplication(formData);
     if (result.success) {
       setApplicationData(result.data);
       setSubmitted(true);
     } else {
-      setApiError(result.error);
+      if (result.errorData && typeof result.errorData === 'object') {
+        let hasFieldErrors = false;
+        Object.keys(result.errorData).forEach(field => {
+          const val = result.errorData[field];
+          const msg = Array.isArray(val) ? val[0] : (typeof val === 'string' ? val : JSON.stringify(val));
+          if (field === 'supplier_categories') {
+            setCatError(msg);
+            hasFieldErrors = true;
+          } else if (['company_name', 'contact_person', 'email', 'phone', 'address', 'products_services_offered', 'certificate_file'].includes(field)) {
+            setError(field, { type: 'server', message: msg });
+            hasFieldErrors = true;
+          }
+        });
+        if (!hasFieldErrors && result.error) {
+          setApiError(result.error);
+        }
+      } else {
+        setApiError(result.error || 'Failed to submit application.');
+      }
     }
   };
+
+  const onInvalid = () => {
+    if (selectedCategories.length === 0) {
+      setCatError('At least one supplier category must be selected.');
+    }
+  };
+
+  const phoneRegistration = register('phone', VENDOR_VALIDATION_RULES.phone);
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 sm:p-6 relative overflow-hidden font-sans">
@@ -246,7 +304,7 @@ const VendorRegisterPage = () => {
               </div>
             )}
 
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+            <form onSubmit={handleSubmit(onSubmit, onInvalid)} noValidate className="space-y-5">
               
               {/* Section 1: Company Information */}
               <div className="space-y-4">
@@ -261,7 +319,7 @@ const VendorRegisterPage = () => {
                     icon={IconDoc}
                     required
                     error={errors.company_name?.message}
-                    {...register('company_name', { required: 'Company name is required' })}
+                    {...register('company_name', VENDOR_VALIDATION_RULES.company_name)}
                   />
 
                   <InputField
@@ -270,7 +328,7 @@ const VendorRegisterPage = () => {
                     icon={IconUser}
                     required
                     error={errors.contact_person?.message}
-                    {...register('contact_person', { required: 'Contact person is required' })}
+                    {...register('contact_person', VENDOR_VALIDATION_RULES.contact_person)}
                   />
                 </div>
 
@@ -278,23 +336,53 @@ const VendorRegisterPage = () => {
                   <InputField
                     label="Business Email"
                     type="email"
-                    placeholder="sales@company.com"
+                    placeholder="e.g. company@gmail.com"
                     icon={IconMail}
                     required
                     error={errors.email?.message}
-                    {...register('email', {
-                      required: 'Business Email is required',
-                      pattern: { value: /^\S+@\S+$/i, message: 'Invalid email address' }
-                    })}
+                    {...register('email', VENDOR_VALIDATION_RULES.email)}
                   />
 
                   <InputField
                     label="Phone Number"
-                    placeholder="+91 9876543210"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="e.g. 9876543210"
                     icon={IconPhone}
                     required
+                    maxLength={10}
                     error={errors.phone?.message}
-                    {...register('phone', { required: 'Phone number is required' })}
+                    {...phoneRegistration}
+                    onKeyDown={(e) => {
+                      const allowedKeys = [
+                        'Backspace', 'Delete', 'Tab', 'Escape', 'Enter',
+                        'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
+                        'Home', 'End'
+                      ];
+                      if (allowedKeys.includes(e.key) || e.ctrlKey || e.metaKey || e.altKey) {
+                        return;
+                      }
+                      if (!/^[0-9]$/.test(e.key)) {
+                        e.preventDefault();
+                      }
+                    }}
+                    onChange={(e) => {
+                      const cleaned = e.target.value.replace(/\D/g, '').slice(0, 10);
+                      e.target.value = cleaned;
+                      phoneRegistration.onChange(e);
+                    }}
+                    onPaste={(e) => {
+                      e.preventDefault();
+                      const pasteData = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+                      const cleanedPaste = pasteData.replace(/\D/g, '').slice(0, 10);
+                      const target = e.target;
+                      const currentVal = target.value || '';
+                      const start = target.selectionStart || 0;
+                      const end = target.selectionEnd || 0;
+                      const combined = (currentVal.slice(0, start) + cleanedPaste + currentVal.slice(end)).replace(/\D/g, '').slice(0, 10);
+                      target.value = combined;
+                      phoneRegistration.onChange(e);
+                    }}
                   />
                 </div>
 
@@ -309,12 +397,21 @@ const VendorRegisterPage = () => {
                     <textarea
                       rows={2}
                       placeholder="Full business address with postal code"
-                      className="w-full pl-11 pr-4 py-2.5 bg-slate-50/50 focus:bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all"
-                      {...register('address', { required: 'Address is required' })}
+                      className={`w-full pl-11 pr-4 py-2.5 bg-slate-50/50 focus:bg-white border ${
+                        errors.address
+                          ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/20 bg-rose-50/30'
+                          : 'border-slate-200 focus:border-violet-500 focus:ring-violet-500/20'
+                      } rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 transition-all`}
+                      {...register('address', VENDOR_VALIDATION_RULES.address)}
                     />
                   </div>
                   {errors.address && (
-                    <p className="mt-1 text-xs text-rose-500 font-medium">{errors.address.message}</p>
+                    <p className="text-xs text-rose-600 flex items-center gap-1 font-medium mt-1">
+                      <svg className="h-3.5 w-3.5 fill-current flex-shrink-0" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      {errors.address.message}
+                    </p>
                   )}
                 </div>
               </div>
@@ -331,7 +428,9 @@ const VendorRegisterPage = () => {
                     Supplier Categories <span className="text-rose-500">*</span>
                     <span className="text-slate-400 font-normal lowercase ml-1.5">(Select all categories provided by your company)</span>
                   </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-50/70 p-3 rounded-2xl border border-violet-100 max-h-48 overflow-y-auto">
+                  <div className={`grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-50/70 p-3 rounded-2xl border ${
+                    catError ? 'border-rose-300 ring-2 ring-rose-200/50' : 'border-violet-100'
+                  } max-h-48 overflow-y-auto`}>
                     {categories.map((cat) => {
                       const isChecked = selectedCategories.includes(cat.id);
                       return (
@@ -355,6 +454,14 @@ const VendorRegisterPage = () => {
                       );
                     })}
                   </div>
+                  {catError && (
+                    <p className="text-xs text-rose-600 flex items-center gap-1 font-medium mt-1">
+                      <svg className="h-3.5 w-3.5 fill-current flex-shrink-0" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      {catError}
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -371,12 +478,21 @@ const VendorRegisterPage = () => {
                     <textarea
                       rows={3}
                       placeholder="e.g. ICU ventilators, defibrillators, surgical consumables, ultrasound devices, etc."
-                      className="w-full pl-11 pr-4 py-2.5 bg-slate-50/50 focus:bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all"
-                      {...register('products_services_offered', { required: 'Products / Services description is required' })}
+                      className={`w-full pl-11 pr-4 py-2.5 bg-slate-50/50 focus:bg-white border ${
+                        errors.products_services_offered
+                          ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/20 bg-rose-50/30'
+                          : 'border-slate-200 focus:border-violet-500 focus:ring-violet-500/20'
+                      } rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 transition-all`}
+                      {...register('products_services_offered', VENDOR_VALIDATION_RULES.products_services_offered)}
                     />
                   </div>
                   {errors.products_services_offered && (
-                    <p className="mt-1 text-xs text-rose-500 font-medium">{errors.products_services_offered.message}</p>
+                    <p className="text-xs text-rose-600 flex items-center gap-1 font-medium mt-1">
+                      <svg className="h-3.5 w-3.5 fill-current flex-shrink-0" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      {errors.products_services_offered.message}
+                    </p>
                   )}
                 </div>
 
@@ -384,14 +500,17 @@ const VendorRegisterPage = () => {
                   <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
                     Business License / Registration Certificate Upload <span className="text-rose-500">*</span>
                   </label>
-                  <div className={`relative border-2 border-dashed ${errors.certificate_file ? 'border-rose-300 bg-rose-50/20' : 'border-violet-200 hover:border-violet-400 bg-violet-50/20 hover:bg-violet-50/50'} rounded-2xl p-4 text-center transition-colors`}>
+                  <div className={`relative border-2 border-dashed ${
+                    errors.certificate_file
+                      ? 'border-rose-300 bg-rose-50/20'
+                      : 'border-violet-200 hover:border-violet-400 bg-violet-50/20 hover:bg-violet-50/50'
+                  } rounded-2xl p-4 text-center transition-colors`}>
                     <input
                       type="file"
-                      accept=".pdf,.jpg,.jpeg,.png"
+                      accept=".pdf"
                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                       {...register('certificate_file', {
-                        required: 'Business License / Registration Certificate is required',
-                        validate: (files) => (files && files.length > 0) || 'Business License / Registration Certificate is required',
+                        ...VENDOR_VALIDATION_RULES.certificate_file,
                         onChange: (e) => {
                           if (e.target.files && e.target.files[0]) {
                             setFileName(e.target.files[0].name);
@@ -406,11 +525,16 @@ const VendorRegisterPage = () => {
                       <p className="text-xs font-medium text-slate-700">
                         {fileName ? <span className="text-violet-700 font-bold">{fileName}</span> : 'Click or drag file to upload business license/certificate'}
                       </p>
-                      <p className="text-[10px] text-slate-400">PDF, PNG, JPG up to 10MB</p>
+                      <p className="text-[10px] text-slate-400">PDF document only (.pdf)</p>
                     </div>
                   </div>
                   {errors.certificate_file && (
-                    <p className="mt-1 text-xs text-rose-500 font-medium">{errors.certificate_file.message}</p>
+                    <p className="text-xs text-rose-600 flex items-center gap-1 font-medium mt-1">
+                      <svg className="h-3.5 w-3.5 fill-current flex-shrink-0" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      {errors.certificate_file.message}
+                    </p>
                   )}
                 </div>
               </div>

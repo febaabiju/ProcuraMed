@@ -4,6 +4,8 @@ import { motion } from 'framer-motion';
 import axiosClient from '../api/axiosClient';
 import ProcuraMedLogo from '../components/common/ProcuraMedLogo';
 import Button from '../components/common/Button';
+import PasswordRequirementsGuide from '../components/common/PasswordRequirementsGuide';
+import { validatePasswordComplexity } from '../utils/passwordValidation';
 import {
   HiLockClosed,
   HiEye,
@@ -32,6 +34,8 @@ const ResetPasswordPage = () => {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
+  const [passwordError, setPasswordError] = useState('');
+  const [confirmError, setConfirmError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [resetSuccess, setResetSuccess] = useState(false);
@@ -70,22 +74,53 @@ const ResetPasswordPage = () => {
     validateToken();
   }, [uid, token]);
 
+  const handlePasswordChange = (e) => {
+    const val = e.target.value;
+    setNewPassword(val);
+    if (passwordError) {
+      const valCheck = validatePasswordComplexity(val);
+      if (valCheck.isValid) {
+        setPasswordError('');
+      }
+    }
+    if (confirmError && confirmPassword && val === confirmPassword) {
+      setConfirmError('');
+    }
+  };
+
+  const handleConfirmChange = (e) => {
+    const val = e.target.value;
+    setConfirmPassword(val);
+    if (confirmError) {
+      if (val && val === newPassword) {
+        setConfirmError('');
+      }
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitError('');
+    setPasswordError('');
+    setConfirmError('');
 
-    if (!newPassword) {
-      setSubmitError('Please enter your new password.');
-      return;
+    let hasError = false;
+
+    const passwordValidation = validatePasswordComplexity(newPassword);
+    if (!passwordValidation.isValid) {
+      setPasswordError(passwordValidation.errorMessage);
+      hasError = true;
     }
 
-    if (newPassword.length < 8) {
-      setSubmitError('Password must be at least 8 characters long.');
-      return;
+    if (!confirmPassword) {
+      setConfirmError('Please confirm your new password.');
+      hasError = true;
+    } else if (newPassword !== confirmPassword) {
+      setConfirmError('New passwords do not match. Please re-enter.');
+      hasError = true;
     }
 
-    if (newPassword !== confirmPassword) {
-      setSubmitError('New passwords do not match. Please re-enter.');
+    if (hasError) {
       return;
     }
 
@@ -269,10 +304,14 @@ const ResetPasswordPage = () => {
                 <input
                   type={showNewPassword ? 'text' : 'password'}
                   value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
+                  onChange={handlePasswordChange}
                   placeholder="Enter new password"
                   required
-                  className="w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-colors"
+                  className={`w-full pl-10 pr-10 py-2.5 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-2 transition-colors ${
+                    passwordError
+                      ? 'border border-rose-300 text-rose-900 bg-rose-50/30 focus:border-rose-500 focus:ring-rose-500/20'
+                      : 'border border-slate-200 text-slate-800 bg-slate-50 focus:border-violet-500 focus:ring-violet-500/20'
+                  }`}
                 />
                 <button
                   type="button"
@@ -282,10 +321,17 @@ const ResetPasswordPage = () => {
                   {showNewPassword ? <HiEyeOff className="w-4 h-4" /> : <HiEye className="w-4 h-4" />}
                 </button>
               </div>
-              <p className="text-[10px] text-slate-400 mt-1">
-                Must be at least 8 characters long.
-              </p>
+              {passwordError && (
+                <p className="text-xs text-rose-600 flex items-center gap-1 font-medium mt-1">
+                  <svg className="h-3.5 w-3.5 fill-current" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                  {passwordError}
+                </p>
+              )}
             </div>
+
+            <PasswordRequirementsGuide password={newPassword} />
 
             {/* Confirm New Password */}
             <div>
@@ -299,10 +345,14 @@ const ResetPasswordPage = () => {
                 <input
                   type={showConfirmPassword ? 'text' : 'password'}
                   value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  onChange={handleConfirmChange}
                   placeholder="Confirm new password"
                   required
-                  className="w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-colors"
+                  className={`w-full pl-10 pr-10 py-2.5 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-2 transition-colors ${
+                    confirmError
+                      ? 'border border-rose-300 text-rose-900 bg-rose-50/30 focus:border-rose-500 focus:ring-rose-500/20'
+                      : 'border border-slate-200 text-slate-800 bg-slate-50 focus:border-violet-500 focus:ring-violet-500/20'
+                  }`}
                 />
                 <button
                   type="button"
@@ -312,6 +362,14 @@ const ResetPasswordPage = () => {
                   {showConfirmPassword ? <HiEyeOff className="w-4 h-4" /> : <HiEye className="w-4 h-4" />}
                 </button>
               </div>
+              {confirmError && (
+                <p className="text-xs text-rose-600 flex items-center gap-1 font-medium mt-1">
+                  <svg className="h-3.5 w-3.5 fill-current" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                  {confirmError}
+                </p>
+              )}
             </div>
 
             <div className="pt-2">

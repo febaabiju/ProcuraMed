@@ -3,6 +3,7 @@ from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import Role, Department, User, AuditLog, SystemSetting
+from .validators import validate_password_complexity
 
 
 class RoleSerializer(serializers.ModelSerializer):
@@ -45,7 +46,7 @@ class UserCreateUpdateSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(required=False, allow_blank=True)
     email = serializers.CharField(required=False, allow_blank=True)
     phone = serializers.CharField(required=False, allow_blank=True)
-    password = serializers.CharField(write_only=True, required=False, min_length=6)
+    password = serializers.CharField(write_only=True, required=False)
     role = serializers.PrimaryKeyRelatedField(queryset=Role.objects.all(), required=False, allow_null=True)
     department = serializers.PrimaryKeyRelatedField(queryset=Department.objects.all(), required=False, allow_null=True)
 
@@ -121,6 +122,11 @@ class UserCreateUpdateSerializer(serializers.ModelSerializer):
         if val not in ['Male', 'Female']:
             raise serializers.ValidationError("Please select a valid gender (Male or Female).")
         return val
+
+    def validate_password(self, value):
+        if value:
+            validate_password_complexity(value)
+        return value
 
     def validate(self, attrs):
         if self.instance is None:
@@ -218,7 +224,11 @@ class AuditLogSerializer(serializers.ModelSerializer):
 
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(required=True, write_only=True)
-    new_password = serializers.CharField(required=True, write_only=True, min_length=6)
+    new_password = serializers.CharField(required=True, write_only=True)
+
+    def validate_new_password(self, value):
+        validate_password_complexity(value)
+        return value
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):

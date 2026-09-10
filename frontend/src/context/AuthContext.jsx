@@ -62,7 +62,7 @@ export const AuthProvider = ({ children }) => {
         if (typeof errData === 'string') message = errData;
         else message = Object.values(errData).flat().join(' ');
       }
-      return { success: false, error: message };
+      return { success: false, error: message, errorData: errData };
     } finally {
       setLoading(false);
     }

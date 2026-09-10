@@ -6,6 +6,8 @@ import axiosClient from '../../api/axiosClient';
 import ProcuraMedLogo from '../../components/common/ProcuraMedLogo';
 import InputField from '../../components/common/InputField';
 import Button from '../../components/common/Button';
+import PasswordRequirementsGuide from '../../components/common/PasswordRequirementsGuide';
+import { validatePasswordComplexity } from '../../utils/passwordValidation';
 import { HiLockClosed, HiEye, HiEyeOff, HiShieldCheck, HiCheckCircle, HiXCircle } from 'react-icons/hi';
 
 const VendorChangePasswordPage = () => {
@@ -16,24 +18,59 @@ const VendorChangePasswordPage = () => {
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [confirmError, setConfirmError] = useState('');
   const [success, setSuccess] = useState('');
   const navigate = useNavigate();
+
+  const handlePasswordChange = (e) => {
+    const val = e.target.value;
+    setNewPassword(val);
+    if (passwordError) {
+      const valCheck = validatePasswordComplexity(val);
+      if (valCheck.isValid) {
+        setPasswordError('');
+      }
+    }
+    if (confirmError && confirmPassword && val === confirmPassword) {
+      setConfirmError('');
+    }
+  };
+
+  const handleConfirmChange = (e) => {
+    const val = e.target.value;
+    setConfirmPassword(val);
+    if (confirmError) {
+      if (val && val === newPassword) {
+        setConfirmError('');
+      }
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setPasswordError('');
+    setConfirmError('');
     setSuccess('');
 
-    if (!newPassword) {
-      setError('Please enter a new password.');
-      return;
+    let hasError = false;
+
+    const passwordValidation = validatePasswordComplexity(newPassword);
+    if (!passwordValidation.isValid) {
+      setPasswordError(passwordValidation.errorMessage);
+      hasError = true;
     }
-    if (newPassword.length < 6) {
-      setError('New password must be at least 6 characters.');
-      return;
+
+    if (!confirmPassword) {
+      setConfirmError('Please confirm your new password.');
+      hasError = true;
+    } else if (newPassword !== confirmPassword) {
+      setConfirmError('Passwords do not match. Please verify and re-enter.');
+      hasError = true;
     }
-    if (newPassword !== confirmPassword) {
-      setError('Passwords do not match. Please verify and re-enter.');
+
+    if (hasError) {
       return;
     }
 
@@ -134,7 +171,8 @@ const VendorChangePasswordPage = () => {
               placeholder="••••••••"
               icon={HiLockClosed}
               value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
+              onChange={handlePasswordChange}
+              error={passwordError}
               required
             />
             <button
@@ -146,6 +184,8 @@ const VendorChangePasswordPage = () => {
             </button>
           </div>
 
+          <PasswordRequirementsGuide password={newPassword} />
+
           <div className="relative">
             <InputField
               label="Confirm New Password"
@@ -153,7 +193,8 @@ const VendorChangePasswordPage = () => {
               placeholder="••••••••"
               icon={HiLockClosed}
               value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
+              onChange={handleConfirmChange}
+              error={confirmError}
               required
             />
             <button

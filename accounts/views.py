@@ -9,6 +9,8 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.pagination import PageNumberPagination
 
 from .models import Role, Department, User, AuditLog, SystemSetting
+from .validators import validate_password_complexity
+from rest_framework.exceptions import ValidationError
 from .serializers import (
     RoleSerializer, DepartmentSerializer, UserSerializer, 
     UserCreateUpdateSerializer, AuditLogSerializer, CustomTokenObtainPairSerializer,
@@ -105,9 +107,19 @@ class UserViewSet(viewsets.ModelViewSet):
         new_password = request.data.get('new_password')
         confirm_password = request.data.get('confirm_password')
 
-        if not new_password or len(new_password) < 6:
-            return Response({'error': 'New password must be at least 6 characters.'}, status=status.HTTP_400_BAD_REQUEST)
-        if confirm_password and new_password != confirm_password:
+        if not new_password:
+            return Response({'error': 'New password is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            validate_password_complexity(new_password)
+        except ValidationError as exc:
+            msg = exc.detail[0] if isinstance(exc.detail, list) else str(exc.detail)
+            return Response({'error': msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not confirm_password:
+            return Response({'error': 'Please confirm your new password.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if new_password != confirm_password:
             return Response({'error': 'Passwords do not match. Please verify and re-enter.'}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
@@ -310,9 +322,18 @@ class ResetPasswordConfirmView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if len(new_password) < 8:
+        try:
+            validate_password_complexity(new_password)
+        except ValidationError as exc:
+            msg = exc.detail[0] if isinstance(exc.detail, list) else str(exc.detail)
             return Response(
-                {'error': 'Password must be at least 8 characters long.'},
+                {'error': msg},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not confirm_password:
+            return Response(
+                {'error': 'Please confirm your new password.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
