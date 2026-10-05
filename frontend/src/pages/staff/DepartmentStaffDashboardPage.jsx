@@ -485,6 +485,7 @@ const DepartmentStaffDashboardPage = () => {
                       <tr>
                         <th className="px-4 py-3">Request Number</th>
                         <th className="px-4 py-3">Item / Requirement</th>
+                        <th className="px-4 py-3">Assigned Officer</th>
                         <th className="px-4 py-3">Request Date</th>
                         <th className="px-4 py-3">Est. Budget</th>
                         <th className="px-4 py-3">Priority</th>
@@ -500,6 +501,24 @@ const DepartmentStaffDashboardPage = () => {
                           </td>
                           <td className="px-4 py-3 font-bold text-slate-900 max-w-[200px] truncate">
                             {req.title}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            {req.assigned_purchase_officer_name ? (
+                              <div>
+                                <span className="font-bold text-slate-900 block text-xs">
+                                  {req.assigned_purchase_officer_name}
+                                </span>
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 mt-0.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                  Assigned
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-slate-500 text-xs font-medium">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                                Pending Assignment
+                              </span>
+                            )}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap text-slate-600">
                             {formatDate(req.created_at)}
@@ -642,7 +661,11 @@ const DepartmentStaffDashboardPage = () => {
               </div>
 
               <div className="space-y-3 text-xs text-slate-700">
-                <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                  <div>
+                    <p className="text-[10px] uppercase font-bold text-slate-400">Requester</p>
+                    <p className="font-bold text-slate-800 mt-0.5">{selectedRequest.requested_by_employee_id || selectedRequest.requested_by_name || 'Staff'}</p>
+                  </div>
                   <div>
                     <p className="text-[10px] uppercase font-bold text-slate-400">Department</p>
                     <p className="font-bold text-slate-800 mt-0.5">{selectedRequest.department_name}</p>
@@ -661,6 +684,22 @@ const DepartmentStaffDashboardPage = () => {
                     <p className="text-[10px] uppercase font-bold text-slate-400">Current Status</p>
                     <span className={`inline-block mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getStatusBadge(selectedRequest.status)}`}>
                       {getReadableStatus(selectedRequest.status)}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase font-bold text-slate-400">Assigned Purchase Officer</p>
+                    <p className="font-bold text-slate-800 mt-0.5">
+                      {selectedRequest.assigned_purchase_officer_name || 'Pending Assignment'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase font-bold text-slate-400">Assignment Status</p>
+                    <span className={`inline-block mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${
+                      selectedRequest.assigned_purchase_officer_name
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-amber-50 text-amber-700 border-amber-200'
+                    }`}>
+                      {selectedRequest.assigned_purchase_officer_name ? 'Assigned' : 'Pending Assignment'}
                     </span>
                   </div>
                 </div>

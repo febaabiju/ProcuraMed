@@ -66,7 +66,12 @@ const MyRequisitionsPage = () => {
         !searchQuery ||
         req.req_number?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         req.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        req.justification?.toLowerCase().includes(searchQuery.toLowerCase());
+        req.justification?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        req.requested_by_details?.employee_id?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        req.department_details?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        req.assigned_purchase_officer_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        req.assigned_purchase_officer_details?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        req.assigned_purchase_officer_details?.username?.toLowerCase().includes(searchQuery.toLowerCase());
 
       const matchesStatus =
         statusFilter === 'ALL' ||
@@ -317,6 +322,7 @@ const MyRequisitionsPage = () => {
                   <tr>
                     <th className="py-3.5 px-5">Requisition #</th>
                     <th className="py-3.5 px-5">Title & Justification</th>
+                    <th className="py-3.5 px-5">Assigned Officer</th>
                     <th className="py-3.5 px-5">Priority</th>
                     <th className="py-3.5 px-5">Items</th>
                     <th className="py-3.5 px-5">Est. Budget</th>
@@ -329,6 +335,11 @@ const MyRequisitionsPage = () => {
                   {filteredRequisitions.map((req) => {
                     const isDraft = req.status === 'DRAFT';
                     const itemsCount = req.items?.length || 0;
+                    const poName =
+                      req.assigned_purchase_officer_name ||
+                      req.assigned_purchase_officer_details?.full_name ||
+                      req.assigned_purchase_officer_details?.username;
+                    const isAssigned = !!(req.assigned_purchase_officer || poName);
                     return (
                       <tr key={req.id} className="hover:bg-slate-50/60 transition-colors">
                         {/* Requisition Number */}
@@ -344,6 +355,34 @@ const MyRequisitionsPage = () => {
                           <span className="text-slate-400 block truncate text-[11px] mt-0.5">
                             {req.justification || 'No justification specified'}
                           </span>
+                        </td>
+
+                        {/* Assigned Purchase Officer */}
+                        <td className="py-4 px-5 whitespace-nowrap">
+                          {isAssigned ? (
+                            <div>
+                              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                                Assigned Purchase Officer
+                              </span>
+                              <span className="font-bold text-slate-900 block text-xs mt-0.5">
+                                {poName}
+                              </span>
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 mt-0.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                Assigned
+                              </span>
+                            </div>
+                          ) : (
+                            <div>
+                              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                                Assigned Purchase Officer
+                              </span>
+                              <span className="inline-flex items-center gap-1 text-slate-500 text-xs font-medium mt-0.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                                Pending Assignment
+                              </span>
+                            </div>
+                          )}
                         </td>
 
                         {/* Priority */}
@@ -488,11 +527,26 @@ const MyRequisitionsPage = () => {
                 </div>
 
                 {/* Details Grid */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 rounded-2xl bg-slate-50 text-xs">
+                <div className="grid grid-cols-2 sm:grid-cols-6 gap-4 p-4 rounded-2xl bg-slate-50 text-xs">
+                  <div>
+                    <span className="text-slate-400 block uppercase font-bold text-[10px]">Requester</span>
+                    <span className="font-bold text-slate-800">
+                      {selectedRequisition.requested_by_details?.employee_id || selectedRequisition.requested_by_details?.username || 'Staff'}
+                    </span>
+                  </div>
                   <div>
                     <span className="text-slate-400 block uppercase font-bold text-[10px]">Department</span>
                     <span className="font-bold text-slate-800">
                       {selectedRequisition.department_details?.name || 'Assigned Department'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block uppercase font-bold text-[10px]">Assigned Officer</span>
+                    <span className="font-bold text-slate-800">
+                      {selectedRequisition.assigned_purchase_officer_name ||
+                       selectedRequisition.assigned_purchase_officer_details?.full_name ||
+                       selectedRequisition.assigned_purchase_officer_details?.username ||
+                       'Pending Assignment'}
                     </span>
                   </div>
                   <div>
@@ -512,6 +566,69 @@ const MyRequisitionsPage = () => {
                     <span className="font-bold text-violet-700 font-mono">
                       {formatCurrency(selectedRequisition.estimated_budget)}
                     </span>
+                  </div>
+                </div>
+
+                {/* Purchase Officer Assignment Card */}
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/90 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
+                  <div className="space-y-1">
+                    <span className="text-slate-400 block uppercase font-bold text-[10px] tracking-wider">
+                      Assigned Purchase Officer
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-extrabold text-slate-900 text-sm">
+                        {selectedRequisition.assigned_purchase_officer_name ||
+                         selectedRequisition.assigned_purchase_officer_details?.full_name ||
+                         selectedRequisition.assigned_purchase_officer_details?.username ||
+                         'Pending Assignment'}
+                      </span>
+                      {selectedRequisition.assigned_purchase_officer_details?.employee_id && (
+                        <span className="text-[10px] font-mono text-slate-500 bg-slate-200/70 px-1.5 py-0.5 rounded">
+                          {selectedRequisition.assigned_purchase_officer_details.employee_id}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-6">
+                    <div>
+                      <span className="text-slate-400 block uppercase font-bold text-[10px] tracking-wider">
+                        Assignment Status
+                      </span>
+                      <span
+                        className={`inline-flex items-center gap-1.5 mt-0.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
+                          selectedRequisition.assigned_purchase_officer ||
+                          selectedRequisition.assigned_purchase_officer_name ||
+                          selectedRequisition.assigned_purchase_officer_details
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : 'bg-amber-50 text-amber-700 border-amber-200'
+                        }`}
+                      >
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            selectedRequisition.assigned_purchase_officer ||
+                            selectedRequisition.assigned_purchase_officer_name ||
+                            selectedRequisition.assigned_purchase_officer_details
+                              ? 'bg-emerald-500'
+                              : 'bg-amber-500'
+                          }`}
+                        />
+                        {selectedRequisition.assigned_purchase_officer ||
+                         selectedRequisition.assigned_purchase_officer_name ||
+                         selectedRequisition.assigned_purchase_officer_details
+                          ? 'Assigned'
+                          : 'Pending Assignment'}
+                      </span>
+                    </div>
+                    {selectedRequisition.assigned_at && (
+                      <div>
+                        <span className="text-slate-400 block uppercase font-bold text-[10px] tracking-wider">
+                          Assigned At
+                        </span>
+                        <span className="font-semibold text-slate-700 mt-0.5 block">
+                          {formatDate(selectedRequisition.assigned_at)}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 

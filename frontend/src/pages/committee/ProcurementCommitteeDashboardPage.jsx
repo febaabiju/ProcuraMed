@@ -457,8 +457,9 @@ const ProcurementCommitteeDashboardPage = () => {
                           <td className="px-4 py-3 font-mono font-bold text-violet-700 whitespace-nowrap">
                             {rev.req_number}
                           </td>
-                          <td className="px-4 py-3 font-bold text-slate-900 whitespace-nowrap">
-                            {rev.department_name}
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className="font-bold text-slate-900 block">{rev.department_name}</span>
+                            <span className="text-[10px] text-slate-400 block font-normal">By: {rev.submitted_by_name || 'N/A'}</span>
                           </td>
                           <td className="px-4 py-3 text-slate-700 max-w-[150px] truncate">
                             {rev.title}
@@ -662,7 +663,11 @@ const ProcurementCommitteeDashboardPage = () => {
               </div>
 
               <div className="space-y-3 text-xs text-slate-700">
-                <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                  <div>
+                    <p className="text-[10px] uppercase font-bold text-slate-400">Requester</p>
+                    <p className="font-bold text-slate-800 mt-0.5">{selectedReview.submitted_by_name || 'N/A'}</p>
+                  </div>
                   <div>
                     <p className="text-[10px] uppercase font-bold text-slate-400">Department</p>
                     <p className="font-bold text-slate-800 mt-0.5">{selectedReview.department_name}</p>
@@ -677,7 +682,7 @@ const ProcurementCommitteeDashboardPage = () => {
                       {selectedReview.priority}
                     </span>
                   </div>
-                  <div>
+                  <div className="sm:col-span-2">
                     <p className="text-[10px] uppercase font-bold text-slate-400">Technical Evaluation</p>
                     <span className={`inline-block mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getTechStatusBadge(selectedReview.technical_evaluation_status)}`}>
                       {selectedReview.technical_evaluation_status}

@@ -25,7 +25,7 @@ from .constants import DEPARTMENT_CATEGORY_MAP, get_allowed_categories_for_depar
 
 
 class RequisitionViewSet(viewsets.ModelViewSet):
-    queryset = Requisition.objects.select_related('department', 'requested_by').prefetch_related('approvals', 'items').all()
+    queryset = Requisition.objects.select_related('department', 'requested_by', 'assigned_purchase_officer').prefetch_related('approvals', 'items').all()
     serializer_class = RequisitionSerializer
     permission_classes = [IsAuthenticated, IsRequisitionOwnerOrOfficer]
     filterset_class = RequisitionFilter
@@ -46,12 +46,26 @@ class RequisitionViewSet(viewsets.ModelViewSet):
 
         r_name = user.role.name.lower() if user.role else ''
         is_staff_role = 'staff' in r_name or 'department' in r_name
-        is_privileged = (
-            user.is_superuser or user.is_staff or
-            any(role in r_name for role in ['admin', 'purchase', 'committee', 'technical'])
-        )
+        is_po = any(x in r_name for x in ['purchase', 'officer']) and ('staff' not in r_name)
+        is_admin_or_super = user.is_superuser or user.is_staff or 'admin' in r_name
 
-        qs = Requisition.objects.select_related('department', 'requested_by').prefetch_related('approvals', 'items')
+        qs = Requisition.objects.select_related('department', 'requested_by', 'assigned_purchase_officer').prefetch_related('approvals', 'items')
+
+        if is_admin_or_super:
+            return qs
+
+        if is_po:
+            if self.action == 'review':
+                return qs
+            return qs.filter(
+                Q(assigned_purchase_officer=user) |
+                Q(requested_by=user) |
+                Q(assigned_purchase_officer__isnull=True, reviewed_by=user)
+            )
+
+        is_privileged = (
+            any(role in r_name for role in ['admin', 'committee', 'technical'])
+        )
 
         if (is_staff_role and not is_privileged) or not is_privileged:
             return qs.filter(requested_by=user)
@@ -68,9 +82,18 @@ class RequisitionViewSet(viewsets.ModelViewSet):
             if not user.department:
                 from rest_framework.exceptions import ValidationError
                 raise ValidationError({'department': 'Department Staff must have an assigned department to create a purchase requisition.'})
-            serializer.save(requested_by=user, department=user.department)
+            instance = serializer.save(requested_by=user, department=user.department)
         else:
-            serializer.save(requested_by=user)
+            instance = serializer.save(requested_by=user)
+
+        if instance.status == Requisition.StatusChoices.SUBMITTED:
+            po_tag = f" Assigned to Purchase Officer @{instance.assigned_purchase_officer.username}." if instance.assigned_purchase_officer else ""
+            AuditLog.objects.create(
+                user=user,
+                action='Requisition Submitted',
+                module='Purchase Requisition',
+                description=f"Department staff @{user.username} created and submitted requisition {instance.req_number} ('{instance.title}').{po_tag}"
+            )
 
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -94,12 +117,15 @@ class RequisitionViewSet(viewsets.ModelViewSet):
         new_status = request.data.get('status')
         if prev_status == Requisition.StatusChoices.RETURNED and new_status == Requisition.StatusChoices.SUBMITTED:
             instance.submitted_at = timezone.now()
-            instance.save(update_fields=['submitted_at'])
+            if not instance.assigned_purchase_officer:
+                instance.assign_purchase_officer(save=False)
+            instance.save(update_fields=['submitted_at', 'assigned_purchase_officer', 'assigned_at'])
+            po_tag = f" Assigned to Purchase Officer @{instance.assigned_purchase_officer.username}." if instance.assigned_purchase_officer else ""
             AuditLog.objects.create(
                 user=request.user,
                 action='Requisition Resubmitted',
                 module='Purchase Requisition',
-                description=f"Department staff @{request.user.username} corrected and resubmitted requisition {instance.req_number} ('{instance.title}')."
+                description=f"Department staff @{request.user.username} corrected and resubmitted requisition {instance.req_number} ('{instance.title}').{po_tag}"
             )
         return response
 
@@ -125,12 +151,15 @@ class RequisitionViewSet(viewsets.ModelViewSet):
         new_status = request.data.get('status')
         if prev_status == Requisition.StatusChoices.RETURNED and new_status == Requisition.StatusChoices.SUBMITTED:
             instance.submitted_at = timezone.now()
-            instance.save(update_fields=['submitted_at'])
+            if not instance.assigned_purchase_officer:
+                instance.assign_purchase_officer(save=False)
+            instance.save(update_fields=['submitted_at', 'assigned_purchase_officer', 'assigned_at'])
+            po_tag = f" Assigned to Purchase Officer @{instance.assigned_purchase_officer.username}." if instance.assigned_purchase_officer else ""
             AuditLog.objects.create(
                 user=request.user,
                 action='Requisition Resubmitted',
                 module='Purchase Requisition',
-                description=f"Department staff @{request.user.username} corrected and resubmitted requisition {instance.req_number} ('{instance.title}')."
+                description=f"Department staff @{request.user.username} corrected and resubmitted requisition {instance.req_number} ('{instance.title}').{po_tag}"
             )
         return response
 
@@ -200,11 +229,12 @@ class RequisitionViewSet(viewsets.ModelViewSet):
 
         # Record submission / resubmission in AuditLog
         action_name = 'Requisition Resubmitted' if previous_status == Requisition.StatusChoices.RETURNED else 'Requisition Submitted'
+        po_tag = f" Assigned to Purchase Officer @{requisition.assigned_purchase_officer.username}." if requisition.assigned_purchase_officer else ""
         AuditLog.objects.create(
             user=request.user,
             action=action_name,
             module='Purchase Requisition',
-            description=f"Department staff @{request.user.username} submitted requisition {requisition.req_number} ('{requisition.title}') with {requisition.items.count()} items (Est. budget: ₹{requisition.estimated_budget or 0})."
+            description=f"Department staff @{request.user.username} submitted requisition {requisition.req_number} ('{requisition.title}') with {requisition.items.count()} items (Est. budget: ₹{requisition.estimated_budget or 0}).{po_tag}"
         )
 
         return Response({
@@ -231,6 +261,14 @@ class RequisitionViewSet(viewsets.ModelViewSet):
                 {'detail': 'You cannot review your own submitted requisition.'},
                 status=status.HTTP_403_FORBIDDEN
             )
+
+        # Business Rule: Purchase Officers can only review requisitions assigned to them
+        if is_po and not (user.is_superuser or user.is_staff):
+            if requisition.assigned_purchase_officer and requisition.assigned_purchase_officer != user:
+                return Response(
+                    {'detail': 'You can only review requisitions assigned to you.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
         # Business Rule: Only submitted requisitions can be reviewed
         if requisition.status != Requisition.StatusChoices.SUBMITTED:
@@ -386,8 +424,19 @@ class RequisitionViewSet(viewsets.ModelViewSet):
 
         user = request.user
         r_name = user.role.name.lower() if user.role else ''
+        is_po = any(x in r_name for x in ['purchase', 'officer']) and ('staff' not in r_name)
+        is_admin_or_super = user.is_superuser or user.is_staff or 'admin' in r_name
+
+        if is_po and not is_admin_or_super:
+            if requisition.assigned_purchase_officer and requisition.assigned_purchase_officer != user:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("You do not have permission to access this supporting document.")
+            if requisition.assigned_purchase_officer is None and requisition.reviewed_by and requisition.reviewed_by != user:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("You do not have permission to access this supporting document.")
+
         is_privileged = (
-            user.is_superuser or user.is_staff or
+            is_admin_or_super or
             any(role in r_name for role in ['admin', 'purchase', 'committee', 'technical'])
         )
 
@@ -518,7 +567,7 @@ class DepartmentStaffDashboardView(APIView):
         }
 
         # Filter strictly by the authenticated department staff member
-        user_reqs = Requisition.objects.filter(requested_by=user).select_related('department', 'requested_by')
+        user_reqs = Requisition.objects.filter(requested_by=user).select_related('department', 'requested_by', 'assigned_purchase_officer')
 
         total_requests = user_reqs.count()
         draft_requests = user_reqs.filter(status='DRAFT').count()
@@ -544,6 +593,7 @@ class DepartmentStaffDashboardView(APIView):
         # Recent purchase requests (latest 10)
         recent_reqs_data = []
         for req in user_reqs.order_by('-created_at')[:10]:
+            po_name = (req.assigned_purchase_officer.get_full_name() or req.assigned_purchase_officer.username) if req.assigned_purchase_officer else None
             recent_reqs_data.append({
                 'id': req.id,
                 'req_number': req.req_number,
@@ -554,14 +604,28 @@ class DepartmentStaffDashboardView(APIView):
                 'justification': req.justification,
                 'created_at': req.created_at.isoformat(),
                 'department_name': req.department.name if req.department else 'N/A',
+                'requested_by_name': req.requested_by.get_full_name() or req.requested_by.username if req.requested_by else 'N/A',
+                'requested_by_employee_id': req.requested_by.employee_id if req.requested_by else '',
+                'assigned_purchase_officer': req.assigned_purchase_officer_id,
+                'assigned_purchase_officer_name': po_name,
+                'assignment_status': 'Assigned' if req.assigned_purchase_officer else 'Pending Assignment',
+                'assigned_at': req.assigned_at.isoformat() if req.assigned_at else None,
             })
 
         # Notifications / audit events
         notifications = []
         user_dept_name = user.department.name if user.department else ''
-        q_filter = Q(user=user) | Q(description__icontains=user.username)
-        if user_dept_name:
-            q_filter |= (Q(module__icontains='requisition') & Q(description__icontains=user_dept_name))
+        user_req_numbers = list(user_reqs.values_list('req_number', flat=True))
+
+        q_filter = Q(user=user) | Q(description__icontains=f"@{user.username}")
+        if user_req_numbers:
+            req_q = Q()
+            for rn in user_req_numbers:
+                req_q |= Q(description__icontains=rn)
+            q_filter |= (Q(module__icontains='requisition') & req_q)
+        elif user_dept_name:
+            # If user has no requisitions, do not expose other users' requisitions by department
+            q_filter |= (Q(module__icontains='department') & Q(description__icontains=user_dept_name))
 
         logs = AuditLog.objects.filter(q_filter).order_by('-created_at')[:8]
 
@@ -606,11 +670,13 @@ class PurchaseOfficerDashboardView(APIView):
     Returns authenticated Purchase Officer profile info, 8 procurement summary cards,
     procurement pipeline breakdown, pending requisitions, recent quotations,
     committee review cases, purchase orders, active deliveries, and notifications.
+    Strictly scoped to requisitions assigned to the logged-in Purchase Officer.
     """
     permission_classes = [IsAuthenticated, IsPurchaseOfficer]
 
     def get(self, request):
         user = request.user
+        is_admin_or_super = user.is_superuser or user.is_staff or (user.role and 'admin' in user.role.name.lower())
 
         user_info = {
             'id': user.id,
@@ -629,41 +695,64 @@ class PurchaseOfficerDashboardView(APIView):
             'date_of_joining': user.date_of_joining,
         }
 
+        # Base queryset of requisitions assigned to the logged-in Purchase Officer
+        # (also including legacy requisitions reviewed by this officer for backwards compatibility)
+        if is_admin_or_super:
+            assigned_reqs_base = Requisition.objects.all()
+        else:
+            assigned_reqs_base = Requisition.objects.filter(
+                Q(assigned_purchase_officer=user) |
+                Q(assigned_purchase_officer__isnull=True, reviewed_by=user)
+            )
+
         # 1. Procurement Summary Cards (8 metrics)
-        pending_requisitions_count = Requisition.objects.filter(status=Requisition.StatusChoices.SUBMITTED).count()
-        requisitions_under_processing_count = Requisition.objects.filter(
+        pending_requisitions_count = assigned_reqs_base.filter(status=Requisition.StatusChoices.SUBMITTED).count()
+        requisitions_under_processing_count = assigned_reqs_base.filter(
             status__in=[
                 Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION,
                 Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW,
                 'UNDER_REVIEW', 'RFQ_ISSUED', 'PENDING_APPROVAL'
             ]
         ).count()
-        quotation_requests_count = QuotationRequest.objects.filter(status='OPEN').count()
-        quotations_received_count = Quotation.objects.filter(status__in=['SUBMITTED', 'UNDER_REVIEW']).count()
-        pending_committee_review_count = Approval.objects.filter(status='PENDING', stage__icontains='Committee').count()
+        quotation_requests_count = QuotationRequest.objects.filter(requisition__in=assigned_reqs_base, status='OPEN').count()
+        quotations_received_count = Quotation.objects.filter(quotation_request__requisition__in=assigned_reqs_base, status__in=['SUBMITTED', 'UNDER_REVIEW']).count()
+        pending_committee_review_count = Approval.objects.filter(requisition__in=assigned_reqs_base, status='PENDING', stage__icontains='Committee').count()
         if pending_committee_review_count == 0:
-            pending_committee_review_count = Requisition.objects.filter(
+            pending_committee_review_count = assigned_reqs_base.filter(
                 status__in=['UNDER_REVIEW', Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW]
             ).count()
-        approved_pos_count = PurchaseOrder.objects.filter(status__in=['ISSUED', 'PARTIALLY_DELIVERED', 'DELIVERED', 'INSPECTED', 'CLOSED']).count()
-        pending_deliveries_count = Delivery.objects.filter(status__in=['DISPATCHED', 'IN_TRANSIT']).count()
+        approved_pos_count = PurchaseOrder.objects.filter(
+            quotation__quotation_request__requisition__in=assigned_reqs_base,
+            status__in=['ISSUED', 'PARTIALLY_DELIVERED', 'DELIVERED', 'INSPECTED', 'CLOSED']
+        ).count()
+        pending_deliveries_count = Delivery.objects.filter(
+            purchase_order__quotation__quotation_request__requisition__in=assigned_reqs_base,
+            status__in=['DISPATCHED', 'IN_TRANSIT']
+        ).count()
         if pending_deliveries_count == 0:
-            pending_deliveries_count = PurchaseOrder.objects.filter(status__in=['ISSUED', 'PARTIALLY_DELIVERED']).count()
-        completed_procurement_count = PurchaseOrder.objects.filter(status='CLOSED').count() + Requisition.objects.filter(status='COMPLETED').count()
+            pending_deliveries_count = PurchaseOrder.objects.filter(
+                quotation__quotation_request__requisition__in=assigned_reqs_base,
+                status__in=['ISSUED', 'PARTIALLY_DELIVERED']
+            ).count()
+        completed_procurement_count = PurchaseOrder.objects.filter(
+            quotation__quotation_request__requisition__in=assigned_reqs_base,
+            status='CLOSED'
+        ).count() + assigned_reqs_base.filter(status='COMPLETED').count()
 
         # 2. Pipeline Overview (8 stages)
         tech_eval_count = Quotation.objects.filter(
+            quotation_request__requisition__in=assigned_reqs_base,
             status='UNDER_REVIEW',
             quotation_request__requisition__requires_technical_evaluation=True
         ).count()
         if tech_eval_count == 0:
-            tech_eval_count = Requisition.objects.filter(
+            tech_eval_count = assigned_reqs_base.filter(
                 status__in=['UNDER_REVIEW', Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION],
                 requires_technical_evaluation=True
             ).count()
 
         pipeline = {
-            'requisition_received': Requisition.objects.filter(
+            'requisition_received': assigned_reqs_base.filter(
                 status__in=[
                     Requisition.StatusChoices.SUBMITTED,
                     Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION,
@@ -671,19 +760,22 @@ class PurchaseOfficerDashboardView(APIView):
                     'PENDING_APPROVAL', 'DRAFT'
                 ]
             ).count(),
-            'under_procurement': Requisition.objects.filter(status='UNDER_REVIEW').count(),
-            'quotations': QuotationRequest.objects.filter(status='OPEN').count(),
+            'under_procurement': assigned_reqs_base.filter(status='UNDER_REVIEW').count(),
+            'quotations': quotation_requests_count,
             'technical_evaluation': tech_eval_count,
             'committee_review': pending_committee_review_count,
-            'purchase_order': PurchaseOrder.objects.filter(status='ISSUED').count(),
+            'purchase_order': PurchaseOrder.objects.filter(
+                quotation__quotation_request__requisition__in=assigned_reqs_base,
+                status='ISSUED'
+            ).count(),
             'delivery': pending_deliveries_count,
             'completed': completed_procurement_count,
         }
 
         # 3. Pending Purchase Requisitions (submitted requisitions requiring PO review)
-        pending_reqs_qs = Requisition.objects.filter(
+        pending_reqs_qs = assigned_reqs_base.filter(
             status=Requisition.StatusChoices.SUBMITTED
-        ).select_related('department', 'requested_by', 'reviewed_by').prefetch_related('items').order_by('-submitted_at', '-created_at')[:10]
+        ).select_related('department', 'requested_by', 'reviewed_by', 'assigned_purchase_officer').prefetch_related('items').order_by('-submitted_at', '-created_at')[:10]
         
         pending_requisitions = []
         for req in pending_reqs_qs:
@@ -714,8 +806,12 @@ class PurchaseOfficerDashboardView(APIView):
                 'req_number': req.req_number,
                 'title': req.title,
                 'department_name': req.department.name if req.department else 'N/A',
-                'requested_by_name': req.requested_by.get_full_name() or req.requested_by.username if req.requested_by else 'N/A',
+                'requested_by_name': f"{req.requested_by.employee_id} • {req.requested_by.get_full_name() or req.requested_by.username}" if (req.requested_by and req.requested_by.employee_id) else (req.requested_by.get_full_name() or req.requested_by.username if req.requested_by else 'N/A'),
+                'requested_by_employee_id': req.requested_by.employee_id if req.requested_by else '',
                 'requested_by_email': req.requested_by.email if req.requested_by else '',
+                'assigned_purchase_officer': req.assigned_purchase_officer_id,
+                'assigned_purchase_officer_name': req.assigned_purchase_officer.get_full_name() or req.assigned_purchase_officer.username if req.assigned_purchase_officer else None,
+                'assigned_at': req.assigned_at.isoformat() if req.assigned_at else None,
                 'priority': req.priority,
                 'estimated_budget': str(req.estimated_budget) if req.estimated_budget is not None else None,
                 'status': req.status,
@@ -734,7 +830,9 @@ class PurchaseOfficerDashboardView(APIView):
             })
 
         # 4. Recent Quotations (latest 10)
-        quotations_qs = Quotation.objects.select_related(
+        quotations_qs = Quotation.objects.filter(
+            quotation_request__requisition__in=assigned_reqs_base
+        ).select_related(
             'quotation_request', 'vendor', 'quotation_request__requisition'
         ).order_by('-submission_date')[:10]
         
@@ -757,7 +855,8 @@ class PurchaseOfficerDashboardView(APIView):
         # 5. Procurement Committee Review Status (latest 10)
         committee_cases = []
         approvals_qs = Approval.objects.filter(
-            stage__icontains='Committee'
+            stage__icontains='Committee',
+            requisition__in=assigned_reqs_base
         ).select_related('requisition', 'requisition__department', 'approved_by').order_by('-created_at')[:10]
         
         for app in approvals_qs:
@@ -773,7 +872,7 @@ class PurchaseOfficerDashboardView(APIView):
 
         # If no explicit Approval objects yet, check Requisitions in UNDER_REVIEW
         if not committee_cases:
-            under_review_reqs = Requisition.objects.filter(
+            under_review_reqs = assigned_reqs_base.filter(
                 status__in=['UNDER_REVIEW', 'APPROVED', 'REJECTED']
             ).select_related('department').order_by('-updated_at')[:10]
             for r in under_review_reqs:
@@ -789,7 +888,9 @@ class PurchaseOfficerDashboardView(APIView):
                 })
 
         # 6. Recent Purchase Orders (latest 10)
-        pos_qs = PurchaseOrder.objects.select_related(
+        pos_qs = PurchaseOrder.objects.filter(
+            quotation__quotation_request__requisition__in=assigned_reqs_base
+        ).select_related(
             'quotation', 'vendor', 'created_by'
         ).order_by('-order_date')[:10]
         
@@ -809,7 +910,9 @@ class PurchaseOfficerDashboardView(APIView):
             })
 
         # 7. Active Deliveries (latest 10)
-        deliveries_qs = Delivery.objects.select_related(
+        deliveries_qs = Delivery.objects.filter(
+            purchase_order__quotation__quotation_request__requisition__in=assigned_reqs_base
+        ).select_related(
             'purchase_order', 'vendor'
         ).order_by('-created_at')[:10]
         
@@ -827,10 +930,15 @@ class PurchaseOfficerDashboardView(APIView):
 
         # 8. Notifications (latest 8)
         notifications = []
-        logs = AuditLog.objects.filter(
-            Q(module__in=['requisition', 'quotation', 'purchase_order', 'delivery', 'rfq', 'vendor', 'approval']) |
-            Q(user=user)
-        ).order_by('-created_at')[:8]
+        assigned_req_numbers = list(assigned_reqs_base.values_list('req_number', flat=True))
+        q_filter = Q(user=user) | Q(description__icontains=f"@{user.username}")
+        if assigned_req_numbers:
+            req_q = Q()
+            for rn in assigned_req_numbers:
+                req_q |= Q(description__icontains=rn)
+            q_filter |= ((Q(module__icontains='requisition') | Q(action__icontains='requisition')) & req_q)
+
+        logs = AuditLog.objects.filter(q_filter).order_by('-created_at')[:8]
         
         for log in logs:
             notifications.append({
@@ -965,7 +1073,7 @@ class ProcurementCommitteeDashboardView(APIView):
                 'title': req.title,
                 'department_name': req.department.name if req.department else 'N/A',
                 'category': req.category or (req.department.name if req.department else 'General Supplies'),
-                'submitted_by_name': req.requested_by.get_full_name() or req.requested_by.username if req.requested_by else 'N/A',
+                'submitted_by_name': f"{req.requested_by.employee_id} • {req.requested_by.get_full_name() or req.requested_by.username}" if (req.requested_by and req.requested_by.employee_id) else (req.requested_by.get_full_name() or req.requested_by.username if req.requested_by else 'N/A'),
                 'submission_date': req.created_at.isoformat(),
                 'priority': req.priority,
                 'estimated_budget': str(req.estimated_budget) if req.estimated_budget is not None else None,
@@ -980,7 +1088,7 @@ class ProcurementCommitteeDashboardView(APIView):
                     'id': req.id,
                     'req_number': req.req_number,
                     'department_name': req.department.name if req.department else 'N/A',
-                    'submitted_by': req.requested_by.get_full_name() or req.requested_by.username if req.requested_by else 'N/A',
+                    'submitted_by': f"{req.requested_by.employee_id} • {req.requested_by.get_full_name() or req.requested_by.username}" if (req.requested_by and req.requested_by.employee_id) else (req.requested_by.get_full_name() or req.requested_by.username if req.requested_by else 'N/A'),
                     'technical_evaluation_result': tech_eval_result,
                     'priority': req.priority,
                     'status': 'Pending Committee Review' if req.status in ['UNDER_REVIEW', Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW] else 'Pending Procurement Review',

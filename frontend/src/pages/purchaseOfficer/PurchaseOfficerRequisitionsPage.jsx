@@ -548,8 +548,8 @@ const PurchaseOfficerRequisitionsPage = () => {
                           </span>
                         </td>
 
-                        {/* 3. Requester */}
                         <td className="py-3.5 px-4 whitespace-nowrap text-slate-600">
+                          {req.requested_by_details?.employee_id ? `${req.requested_by_details.employee_id} • ` : ''}
                           {req.requested_by_details?.full_name || req.requested_by_name || req.requested_by_details?.username || 'Staff'}
                         </td>
 
@@ -664,6 +664,7 @@ const PurchaseOfficerRequisitionsPage = () => {
                   <div>
                     <span className="text-slate-400 block uppercase font-bold text-[10px]">Requesting Staff</span>
                     <span className="font-bold text-slate-900 mt-0.5 block">
+                      {selectedReq.requested_by_details?.employee_id ? `${selectedReq.requested_by_details.employee_id} • ` : ''}
                       {selectedReq.requested_by_details?.full_name || selectedReq.requested_by_name || selectedReq.requested_by_details?.username}
                     </span>
                     <span className="text-[10px] text-slate-400">

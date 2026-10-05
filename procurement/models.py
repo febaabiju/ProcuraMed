@@ -219,6 +219,15 @@ class Requisition(models.Model):
         verbose_name="Reviewed By"
     )
     reviewed_at = models.DateTimeField(null=True, blank=True, verbose_name="Reviewed At")
+    assigned_purchase_officer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='assigned_requisitions',
+        verbose_name="Assigned Purchase Officer"
+    )
+    assigned_at = models.DateTimeField(null=True, blank=True, verbose_name="Assigned At")
     submitted_at = models.DateTimeField(null=True, blank=True, verbose_name="Submitted At")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -304,14 +313,67 @@ class Requisition(models.Model):
         advisory = self.get_technical_evaluation_advisory()
         return advisory['recommended'], advisory['suggested_specialization']
 
+    def assign_purchase_officer(self, save=False):
+        """
+        Automatically selects and assigns an eligible Purchase Officer with the lowest current workload.
+        Excludes inactive/disabled Purchase Officers.
+        Workload is determined by currently active Purchase Requisitions waiting for PO review (status=SUBMITTED).
+        Deterministic fair tie-breaking based on least recently assigned (or lowest ID).
+        """
+        from django.contrib.auth import get_user_model
+        from django.db.models import Count, Max, Q
+        from datetime import datetime, timezone as dt_timezone
+
+        User = get_user_model()
+        eligible_pos = User.objects.filter(
+            Q(role__name__icontains='purchase') | Q(role__name__icontains='procurement officer'),
+            is_active=True
+        )
+        if self.requested_by_id:
+            eligible_pos = eligible_pos.exclude(id=self.requested_by_id)
+
+        if not eligible_pos.exists():
+            return None
+
+        # Annotate active workload of requisitions with status=SUBMITTED
+        pos_with_workload = eligible_pos.annotate(
+            active_workload=Count(
+                'assigned_requisitions',
+                filter=Q(assigned_requisitions__status=self.StatusChoices.SUBMITTED)
+            ),
+            last_assigned=Max('assigned_requisitions__assigned_at')
+        )
+
+        min_time = datetime.min.replace(tzinfo=dt_timezone.utc)
+        sorted_pos = sorted(
+            pos_with_workload,
+            key=lambda u: (
+                u.active_workload,
+                u.last_assigned or min_time,
+                u.id
+            )
+        )
+
+        selected_po = sorted_pos[0]
+        self.assigned_purchase_officer = selected_po
+        self.assigned_at = timezone.now()
+
+        if save and self.pk:
+            self.save(update_fields=['assigned_purchase_officer', 'assigned_at', 'updated_at'])
+
+        return selected_po
+
     def save(self, *args, **kwargs):
         if not self.req_number:
             year = timezone.now().strftime('%Y')
             count = Requisition.objects.filter(created_at__year=year).count() + 1
             self.req_number = f"REQ-{year}-{count:05d}"
 
-        if self.status == self.StatusChoices.SUBMITTED and not self.submitted_at:
-            self.submitted_at = timezone.now()
+        if self.status == self.StatusChoices.SUBMITTED:
+            if not self.submitted_at:
+                self.submitted_at = timezone.now()
+            if not self.assigned_purchase_officer:
+                self.assign_purchase_officer()
 
         # NOTE: Department Staff submission does NOT decide whether technical evaluation is required.
         # The Purchase Officer decides this explicitly during the Purchase Officer review stage.

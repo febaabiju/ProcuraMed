@@ -69,6 +69,9 @@ class RequisitionSerializer(serializers.ModelSerializer):
     department_details = DepartmentSerializer(source='department', read_only=True)
     requested_by_details = UserSerializer(source='requested_by', read_only=True)
     reviewed_by_details = UserSerializer(source='reviewed_by', read_only=True)
+    assigned_purchase_officer_details = UserSerializer(source='assigned_purchase_officer', read_only=True)
+    assigned_purchase_officer_name = serializers.SerializerMethodField()
+    assignment_status = serializers.SerializerMethodField()
     approvals = ApprovalSerializer(many=True, read_only=True)
     items = RequisitionItemSerializer(many=True, required=False)
     supporting_document = serializers.FileField(required=False, allow_null=True)
@@ -81,18 +84,35 @@ class RequisitionSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'req_number', 'title', 'category', 'requires_technical_evaluation',
             'technical_specialization', 'department', 'department_details',
-            'requested_by', 'requested_by_details', 'priority', 'estimated_budget',
+            'requested_by', 'requested_by_details', 'assigned_purchase_officer',
+            'assigned_purchase_officer_details', 'assigned_purchase_officer_name',
+            'assignment_status', 'assigned_at',
+            'priority', 'estimated_budget',
             'status', 'justification', 'supporting_document', 'secure_document_url',
             'technical_evaluation_advisory',
             'items', 'approvals', 'review_comments', 'reviewed_by', 'reviewed_by_details',
             'reviewed_at', 'submitted_at', 'required_date', 'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'req_number', 'requested_by', 'requires_technical_evaluation',
+            'id', 'req_number', 'requested_by', 'assigned_purchase_officer',
+            'assigned_purchase_officer_details', 'assigned_purchase_officer_name',
+            'assignment_status', 'assigned_at',
+            'requires_technical_evaluation',
             'technical_specialization', 'review_comments', 'reviewed_by', 'reviewed_at',
             'submitted_at', 'required_date', 'secure_document_url', 'technical_evaluation_advisory',
             'created_at', 'updated_at'
         ]
+
+    def get_assigned_purchase_officer_name(self, obj):
+        if obj.assigned_purchase_officer:
+            full_name = obj.assigned_purchase_officer.get_full_name()
+            return full_name.strip() if full_name and full_name.strip() else obj.assigned_purchase_officer.username
+        return None
+
+    def get_assignment_status(self, obj):
+        if obj.assigned_purchase_officer:
+            return "Assigned"
+        return "Pending Assignment"
 
     def get_technical_evaluation_advisory(self, obj):
         return obj.get_technical_evaluation_advisory()
