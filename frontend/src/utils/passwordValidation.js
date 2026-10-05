@@ -58,12 +58,15 @@ export const isPasswordValid = (password = '') => {
 
 export const validatePasswordComplexity = (password = '') => {
   if (!password || !password.trim()) {
-    return 'Password is required.';
+    return {
+      isValid: false,
+      errorMessage: 'Password is required.',
+    };
   }
 
   const missing = [];
   if (password.length < 8) {
-    missing.append ? missing.append('at least 8 characters') : missing.push('at least 8 characters');
+    missing.push('at least 8 characters');
   }
   if (!/[A-Z]/.test(password)) {
     missing.push('at least 1 uppercase letter (A-Z)');
@@ -79,8 +82,14 @@ export const validatePasswordComplexity = (password = '') => {
   }
 
   if (missing.length > 0) {
-    return `Password must contain ${missing.join(', ')}.`;
+    return {
+      isValid: false,
+      errorMessage: `Password must contain ${missing.join(', ')}.`,
+    };
   }
 
-  return null;
+  return {
+    isValid: true,
+    errorMessage: '',
+  };
 };

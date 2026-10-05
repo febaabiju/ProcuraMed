@@ -35,19 +35,14 @@ class Command(BaseCommand):
             if created:
                 self.stdout.write(self.style.SUCCESS(f"Created Role: {role.name}"))
 
-        # 2. Seed Departments (12 Procurement-Based Departments)
+        # 2. Seed Departments (7 Official Procurement-Based Hospital Departments)
         depts_data = [
-            {'name': 'Medical & Surgical Equipment', 'code': 'MSE'},
+            {'name': 'Medical & Clinical Services', 'code': 'MCS'},
             {'name': 'Biomedical Engineering', 'code': 'BME'},
             {'name': 'Laboratory & Diagnostic Services', 'code': 'LDS'},
-            {'name': 'Radiology & Imaging', 'code': 'RAD'},
-            {'name': 'Medical Consumables', 'code': 'MC'},
-            {'name': 'Critical Care & Emergency Services', 'code': 'CCES'},
-            {'name': 'Operation Theatre & Sterilization', 'code': 'OTS'},
-            {'name': 'Facilities & Maintenance', 'code': 'FM'},
-            {'name': 'Housekeeping & Laundry', 'code': 'HKL'},
+            {'name': 'Facilities & Support Services', 'code': 'FSS'},
             {'name': 'IT & Digital Services', 'code': 'ITDS'},
-            {'name': 'Furniture, Office & General Supplies', 'code': 'FOGS'},
+            {'name': 'Administration & General Supplies', 'code': 'AGS'},
             {'name': 'Central Stores & Logistics', 'code': 'CSL'},
         ]
 
@@ -99,7 +94,7 @@ class Command(BaseCommand):
                 'first_name': 'System',
                 'last_name': 'Administrator',
                 'role': role_objs['System Administrator'],
-                'department': dept_objs['Information Technology'],
+                'department': dept_objs.get('IT & Digital Services'),
                 'phone': '+91 9876543210',
                 'is_staff': True,
                 'is_superuser': True,

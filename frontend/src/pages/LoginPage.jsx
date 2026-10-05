@@ -137,15 +137,15 @@ const LoginPage = () => {
         } else if (userData?.first_login) {
           navigate('/set-new-password', { replace: true });
         } else if (isStaffUser) {
-          navigate('/staff/dashboard');
+          navigate('/staff/dashboard', { replace: true });
         } else if (isPurchaseOfficerUser) {
-          navigate('/purchase-officer/dashboard');
+          navigate('/purchase-officer/dashboard', { replace: true });
         } else if (isCommitteeUser) {
-          navigate('/committee/dashboard');
+          navigate('/committee/dashboard', { replace: true });
         } else if (isTechnicalOfficerUser) {
-          navigate('/technical-officer/dashboard');
+          navigate('/technical-officer/dashboard', { replace: true });
         } else {
-          navigate('/');
+          navigate('/', { replace: true });
         }
       }, 800);
     } else {
@@ -268,12 +268,12 @@ const LoginPage = () => {
         {/* Form */}
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <InputField
-            label="Username or Email"
-            placeholder="Enter username or email"
+            label="Username"
+            placeholder="Enter username"
             icon={HiUser}
             required
             error={errors.username?.message}
-            {...register('username', { required: 'Username or Email is required' })}
+            {...register('username', { required: 'Username is required' })}
           />
 
           <div className="relative">
@@ -295,14 +295,7 @@ const LoginPage = () => {
             </button>
           </div>
 
-          <div className="flex items-center justify-between text-xs pt-1">
-            <label className="flex items-center gap-2 text-slate-600 cursor-pointer">
-              <input
-                type="checkbox"
-                className="rounded border-slate-300 text-violet-600 focus:ring-violet-500"
-              />
-              <span>Remember me</span>
-            </label>
+          <div className="flex items-center justify-end text-xs pt-1">
             <button
               type="button"
               onClick={() => {

@@ -421,3 +421,34 @@ class SystemSettingsView(views.APIView):
     def patch(self, request):
         return self.put(request)
 
+
+class LogoutView(views.APIView):
+    """
+    Invalidates the authenticated user session, clears Django session,
+    and logs the logout action in AuditLog.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        user = request.user if request.user.is_authenticated else None
+        if user:
+            AuditLog.objects.create(
+                user=user,
+                action='User Logged Out',
+                module='Authentication',
+                description=f"User @{user.username} ({user.role.name if user.role else 'User'}) logged out successfully.",
+                ip_address=request.META.get('REMOTE_ADDR')
+            )
+
+        if hasattr(request, 'session'):
+            request.session.flush()
+
+        from django.contrib.auth import logout as django_logout
+        django_logout(request)
+
+        response = Response({'detail': 'Successfully logged out.'}, status=status.HTTP_200_OK)
+        response['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0, private'
+        response['Pragma'] = 'no-cache'
+        response['Expires'] = '0'
+        return response
+

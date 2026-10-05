@@ -237,42 +237,14 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         password = attrs.get('password', '')
 
         if not raw_username:
-            raise AuthenticationFailed("No account found with the given username or email.")
+            raise AuthenticationFailed("No account found with the given username.")
 
-        # Identify candidate user(s) by username or email
-        user = None
-        if '@' in raw_username:
-            matching_users = list(User.objects.filter(email__iexact=raw_username))
-            if not matching_users:
-                user = User.objects.filter(username__iexact=raw_username).first()
-            elif len(matching_users) == 1:
-                user = matching_users[0]
-            else:
-                # Check active user with matching password
-                for u in matching_users:
-                    if u.is_active and u.check_password(password):
-                        user = u
-                        break
-                if not user:
-                    # Check inactive user with matching password
-                    for u in matching_users:
-                        if not u.is_active and u.check_password(password):
-                            user = u
-                            break
-                if not user:
-                    # Fallback to an inactive account if all are inactive, otherwise first active account
-                    if all(not u.is_active for u in matching_users):
-                        user = matching_users[0]
-                    else:
-                        user = next((u for u in matching_users if u.is_active), matching_users[0])
-        else:
-            user = User.objects.filter(username__iexact=raw_username).first()
-            if not user:
-                user = User.objects.filter(email__iexact=raw_username).first()
+        # Identify user by username only
+        user = User.objects.filter(username__iexact=raw_username).first()
 
         # Check 1: Account does not exist
         if not user:
-            raise AuthenticationFailed("No account found with the given username or email.")
+            raise AuthenticationFailed("No account found with the given username.")
 
         # Check 2: Account is inactive / deactivated
         if not user.is_active:

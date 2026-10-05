@@ -108,8 +108,8 @@ const DepartmentStaffDashboardPage = () => {
   };
 
   const formatCurrency = (amount) => {
-    if (amount === undefined || amount === null || amount === '') return 'N/A';
-    return `$${Number(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (amount === undefined || amount === null || amount === '') return '₹0.00';
+    return `₹${Number(amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   const getPriorityBadge = (priority) => {
@@ -131,6 +131,8 @@ const DepartmentStaffDashboardPage = () => {
       case 'APPROVED':
       case 'COMPLETED':
         return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+      case 'SUBMITTED':
+        return 'bg-blue-50 text-blue-700 border-blue-200';
       case 'RFQ_ISSUED':
         return 'bg-indigo-50 text-indigo-700 border-indigo-200';
       case 'PENDING_APPROVAL':
@@ -146,7 +148,8 @@ const DepartmentStaffDashboardPage = () => {
   };
 
   const getReadableStatus = (status) => {
-    switch (status) {
+    switch (status?.toUpperCase()) {
+      case 'SUBMITTED': return 'Submitted';
       case 'PENDING_APPROVAL': return 'Pending Approval';
       case 'RFQ_ISSUED': return 'Procurement in Progress';
       case 'UNDER_REVIEW': return 'Under Review';
@@ -210,14 +213,13 @@ const DepartmentStaffDashboardPage = () => {
             {/* Quick Actions in Banner */}
             <div className="flex flex-wrap items-center gap-3">
               <Link to="/staff/create-request">
-                <Button
-                  variant="primary"
-                  size="md"
-                  className="bg-white text-violet-900 hover:bg-violet-50 font-bold text-xs gap-1.5 shadow-lg shadow-black/10 border-0"
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white text-violet-950 hover:bg-violet-50 font-bold text-xs sm:text-sm shadow-md hover:shadow-lg transition-all duration-200 cursor-pointer active:scale-95"
                 >
-                  <HiPlus className="w-4 h-4 text-violet-700" />
-                  <span>+ Create Purchase Request</span>
-                </Button>
+                  <HiPlus className="w-4 h-4 text-violet-700 font-bold" />
+                  <span className="text-violet-950 font-bold">Create Purchase Request</span>
+                </button>
               </Link>
 
               <Button

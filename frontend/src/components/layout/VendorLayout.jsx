@@ -35,9 +35,9 @@ const VendorLayout = ({
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const handleConfirmLogout = () => {
-    logout();
+  const handleConfirmLogout = async () => {
     setShowLogoutModal(false);
+    await logout();
     navigate('/login', { replace: true });
   };
 

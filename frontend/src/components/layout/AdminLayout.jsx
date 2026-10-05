@@ -34,9 +34,9 @@ const AdminLayout = ({ children, title = 'System Administrator Portal', subtitle
   const [vendorMenuOpen, setVendorMenuOpen] = useState(true);
   const [systemMenuOpen, setSystemMenuOpen] = useState(true);
 
-  const handleConfirmLogout = () => {
-    logout();
+  const handleConfirmLogout = async () => {
     setShowLogoutModal(false);
+    await logout();
     navigate('/login', { replace: true });
   };
 

@@ -26,8 +26,11 @@ import VendorSupplyCategoriesPage from './pages/vendor/VendorSupplyCategoriesPag
 import VendorChangePasswordPage from './pages/vendor/VendorChangePasswordPage';
 import VendorPlaceholderPage from './pages/vendor/VendorPlaceholderPage';
 import DepartmentStaffDashboardPage from './pages/staff/DepartmentStaffDashboardPage';
+import CreateRequisitionPage from './pages/staff/CreateRequisitionPage';
+import MyRequisitionsPage from './pages/staff/MyRequisitionsPage';
 import StaffPlaceholderPage from './pages/staff/StaffPlaceholderPage';
 import PurchaseOfficerDashboardPage from './pages/purchaseOfficer/PurchaseOfficerDashboardPage';
+import PurchaseOfficerRequisitionsPage from './pages/purchaseOfficer/PurchaseOfficerRequisitionsPage';
 import PurchaseOfficerPlaceholderPage from './pages/purchaseOfficer/PurchaseOfficerPlaceholderPage';
 import ProcurementCommitteeDashboardPage from './pages/committee/ProcurementCommitteeDashboardPage';
 import CommitteePlaceholderPage from './pages/committee/CommitteePlaceholderPage';
@@ -172,7 +175,7 @@ function App() {
             path="/purchase-officer/requisitions"
             element={
               <PurchaseOfficerProtectedRoute>
-                <PurchaseOfficerPlaceholderPage path="/purchase-officer/requisitions" />
+                <PurchaseOfficerRequisitionsPage />
               </PurchaseOfficerProtectedRoute>
             }
           />
@@ -250,7 +253,7 @@ function App() {
             path="/staff/requests"
             element={
               <DepartmentStaffProtectedRoute>
-                <StaffPlaceholderPage path="/staff/requests" />
+                <MyRequisitionsPage />
               </DepartmentStaffProtectedRoute>
             }
           />
@@ -258,7 +261,7 @@ function App() {
             path="/staff/create-request"
             element={
               <DepartmentStaffProtectedRoute>
-                <StaffPlaceholderPage path="/staff/create-request" />
+                <CreateRequisitionPage />
               </DepartmentStaffProtectedRoute>
             }
           />

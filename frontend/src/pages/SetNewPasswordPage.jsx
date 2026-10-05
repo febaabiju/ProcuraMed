@@ -33,6 +33,11 @@ const SetNewPasswordPage = () => {
   const [success, setSuccess] = useState('');
   const navigate = useNavigate();
 
+  const handleSignOut = async () => {
+    await logout();
+    navigate('/login', { replace: true });
+  };
+
   // Redirect unauthenticated users to login
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
@@ -275,7 +280,7 @@ const SetNewPasswordPage = () => {
         <div className="text-center pt-1 border-t border-slate-100">
           <button
             type="button"
-            onClick={logout}
+            onClick={handleSignOut}
             className="text-xs font-semibold text-slate-400 hover:text-slate-600 transition-colors"
           >
             Sign out and return to login

@@ -99,7 +99,9 @@ const ResetPasswordPage = () => {
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    if (e && e.preventDefault) {
+      e.preventDefault();
+    }
     setSubmitError('');
     setPasswordError('');
     setConfirmError('');
@@ -134,10 +136,22 @@ const ResetPasswordPage = () => {
       });
       setResetSuccess(true);
     } catch (err) {
-      const errMsg =
-        err.response?.data?.error ||
-        err.response?.data?.message ||
-        'Failed to reset password. The link may have expired or been used already.';
+      const data = err.response?.data;
+      let errMsg = 'Failed to reset password. The link may have expired or been used already.';
+      if (typeof data?.error === 'string') {
+        errMsg = data.error;
+      } else if (typeof data?.message === 'string') {
+        errMsg = data.message;
+      } else if (typeof data?.detail === 'string') {
+        errMsg = data.detail;
+      } else if (typeof data === 'string') {
+        errMsg = data;
+      } else if (data && typeof data === 'object') {
+        const values = Object.values(data).flat();
+        if (values.length > 0 && typeof values[0] === 'string') {
+          errMsg = values.join(' ');
+        }
+      }
       setSubmitError(errMsg);
     } finally {
       setSubmitting(false);
@@ -272,7 +286,7 @@ const ResetPasswordPage = () => {
 
         {/* State 4: Reset Form */}
         {!validating && tokenValid && !resetSuccess && (
-          <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+          <form onSubmit={handleSubmit} noValidate className="space-y-4 text-xs">
             {associatedUsername && (
               <div className="p-3 bg-violet-50/70 border border-violet-100 rounded-2xl flex items-center justify-between">
                 <div className="flex items-center gap-2 text-violet-950 font-medium text-xs">
@@ -378,6 +392,7 @@ const ResetPasswordPage = () => {
                 variant="primary"
                 size="md"
                 isLoading={submitting}
+                onClick={handleSubmit}
                 className="w-full justify-center font-bold text-white shadow-md shadow-violet-500/20"
                 style={{ background: 'linear-gradient(135deg, #A78BFA, #7C5FF0)' }}
               >

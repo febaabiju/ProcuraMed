@@ -11,8 +11,17 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem('user');
 
     // Use session-based storage so closing the browser/session does not leave the app logged in
+    const token = sessionStorage.getItem('access_token');
     const savedUser = sessionStorage.getItem('user');
-    return savedUser ? JSON.parse(savedUser) : null;
+    if (token && savedUser) {
+      try {
+        return JSON.parse(savedUser);
+      } catch (e) {
+        sessionStorage.clear();
+        return null;
+      }
+    }
+    return null;
   });
   const [loading, setLoading] = useState(false);
 
@@ -68,14 +77,18 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const logout = () => {
-    sessionStorage.removeItem('access_token');
-    sessionStorage.removeItem('refresh_token');
-    sessionStorage.removeItem('user');
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
-    localStorage.removeItem('user');
-    setUser(null);
+  const logout = async () => {
+    try {
+      await axiosClient.post('/accounts/logout/');
+    } catch (err) {
+      // Ignore network or auth errors during logout to guarantee client teardown
+    } finally {
+      sessionStorage.clear();
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('refresh_token');
+      localStorage.removeItem('user');
+      setUser(null);
+    }
   };
 
   const roleName = typeof user?.role === 'string' ? user.role : user?.role?.name;

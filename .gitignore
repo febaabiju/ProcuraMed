@@ -85,3 +85,4 @@ Thumbs.db
 # Agent & Temp directories
 .agents/
 .gemini/
+scratch/

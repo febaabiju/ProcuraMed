@@ -33,10 +33,10 @@ const TechnicalOfficerLayout = ({
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const handleConfirmLogout = () => {
-    logout();
+  const handleConfirmLogout = async () => {
     setShowLogoutModal(false);
-    navigate('/login');
+    await logout();
+    navigate('/login', { replace: true });
   };
 
   const currentUser = technicalUser || authUser;

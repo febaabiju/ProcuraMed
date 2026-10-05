@@ -24,20 +24,77 @@ import {
   HiRefresh
 } from 'react-icons/hi';
 
-const HOSPITAL_DEPARTMENTS = [
-  'Medical & Surgical Equipment',
+export const HOSPITAL_DEPARTMENTS = [
+  'Medical & Clinical Services',
   'Biomedical Engineering',
   'Laboratory & Diagnostic Services',
-  'Radiology & Imaging',
-  'Medical Consumables',
-  'Critical Care & Emergency Services',
-  'Operation Theatre & Sterilization',
-  'Facilities & Maintenance',
-  'Housekeeping & Laundry',
+  'Facilities & Support Services',
   'IT & Digital Services',
-  'Furniture, Office & General Supplies',
+  'Administration & General Supplies',
   'Central Stores & Logistics'
 ];
+
+export const DEPARTMENT_DETAILS_MAP = {
+  'Medical & Clinical Services': {
+    code: 'MCS',
+    categories: [
+      'Medical Equipment & Devices',
+      'Surgical Instruments',
+      'Medical Consumables',
+      'ICU & Critical Care Equipment'
+    ],
+    description: 'Specialized clinical equipment, surgical instruments, medical consumables, and ICU life-support apparatus.'
+  },
+  'Biomedical Engineering': {
+    code: 'BME',
+    categories: [
+      'Biomedical Equipment',
+      'Maintenance & Technical Services'
+    ],
+    description: 'Biomedical devices, sensors, technical calibration, maintenance, and electromechanical medical repairs.'
+  },
+  'Laboratory & Diagnostic Services': {
+    code: 'LDS',
+    categories: [
+      'Laboratory Equipment & Supplies',
+      'Diagnostic Equipment',
+      'Radiology & Imaging Equipment'
+    ],
+    description: 'Clinical laboratory analyzers, diagnostic machinery, pathology supplies, and radiology/imaging systems.'
+  },
+  'Facilities & Support Services': {
+    code: 'FSS',
+    categories: [
+      'Maintenance & Technical Services',
+      'Cleaning & Housekeeping Supplies',
+      'General Hospital Supplies'
+    ],
+    description: 'Hospital facility maintenance, sanitation, housekeeping supplies, and general operational hospital sundries.'
+  },
+  'IT & Digital Services': {
+    code: 'ITDS',
+    categories: [
+      'IT Hardware & Software'
+    ],
+    description: 'Hospital Information Systems (HIS), workstations, servers, clinical software, and network infrastructure.'
+  },
+  'Administration & General Supplies': {
+    code: 'AGS',
+    categories: [
+      'Hospital Furniture & Fixtures',
+      'General Hospital Supplies'
+    ],
+    description: 'Hospital patient beds, clinical fixtures, administrative furniture, and routine operational hospital supplies.'
+  },
+  'Central Stores & Logistics': {
+    code: 'CSL',
+    categories: [
+      'General Hospital Supplies',
+      'Medical Consumables'
+    ],
+    description: 'Central hospital storage, inventory logistics, bulk medical consumables, and routine supply replenishment.'
+  }
+};
 
 const UserManagementPage = () => {
   const location = useLocation();
@@ -355,192 +412,192 @@ const UserManagementPage = () => {
         )}
 
         {/* Search & Filters Card */}
-        <div className="bg-white p-5 rounded-3xl border border-violet-100 shadow-sm space-y-3">
-          <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider">
-            <HiFilter className="w-4 h-4 text-violet-500" />
-            <span>Search &amp; Filters</span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {/* Search input */}
-            <div className="relative">
-              <HiSearch className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search by Employee ID, Name, Username..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-colors"
-              />
-            </div>
-
-            {/* Department Filter */}
-            <div>
-              <select
-                value={deptFilter}
-                onChange={(e) => setDeptFilter(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-colors"
-              >
-                <option value="">All Departments</option>
-                {HOSPITAL_DEPARTMENTS.map((deptName) => {
-                  const deptObj = departments.find((d) => d.name?.toLowerCase() === deptName.toLowerCase());
-                  return (
-                    <option key={deptName} value={deptObj ? deptObj.id : deptName}>
-                      {deptName}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-
-            {/* Status Filter */}
-            <div>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-colors"
-              >
-                <option value="">All Statuses</option>
-                <option value="active">Active Only</option>
-                <option value="inactive">Inactive Only</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {/* Database-Driven Staff Table / Empty State */}
-        <div className="bg-white rounded-3xl border border-violet-100 shadow-sm overflow-hidden">
-          {loading ? (
-            <div className="p-12 text-center text-slate-400 text-xs font-semibold">
-              Loading department staff records...
-            </div>
-          ) : filteredUsers.length === 0 ? (
-            <div className="p-12 text-center space-y-3">
-              <div className="w-14 h-14 rounded-3xl bg-violet-50 text-violet-600 mx-auto flex items-center justify-center font-bold">
-                <HiUsers className="w-7 h-7" />
+            <div className="bg-white p-5 rounded-3xl border border-violet-100 shadow-sm space-y-3">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                <HiFilter className="w-4 h-4 text-violet-500" />
+                <span>Search &amp; Filters</span>
               </div>
-              <h3 className="text-base font-extrabold text-slate-900">No department staff accounts found.</h3>
-              <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
-                Staff accounts created by the System Administrator will appear here.
-              </p>
-              <div className="pt-2">
-                <Button
-                  variant="primary"
-                  size="md"
-                  onClick={() => setCreateModalOpen(true)}
-                  className="gap-2 font-bold"
-                  style={{ background: 'linear-gradient(135deg, #A78BFA, #7C5FF0)' }}
-                >
-                  <HiUserAdd className="w-4 h-4" />
-                  <span>+ Add Department Staff</span>
-                </Button>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* Search input */}
+                <div className="relative">
+                  <HiSearch className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search by Employee ID, Name, Username..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-colors"
+                  />
+                </div>
+
+                {/* Department Filter */}
+                <div>
+                  <select
+                    value={deptFilter}
+                    onChange={(e) => setDeptFilter(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-colors"
+                  >
+                    <option value="">All Departments</option>
+                    {HOSPITAL_DEPARTMENTS.map((deptName) => {
+                      const deptObj = departments.find((d) => d.name?.toLowerCase() === deptName.toLowerCase());
+                      return (
+                        <option key={deptName} value={deptObj ? deptObj.id : deptName}>
+                          {deptName}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                {/* Status Filter */}
+                <div>
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-colors"
+                  >
+                    <option value="">All Statuses</option>
+                    <option value="active">Active Only</option>
+                    <option value="inactive">Inactive Only</option>
+                  </select>
+                </div>
               </div>
             </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase tracking-wider font-semibold">
-                  <tr>
-                    <th className="px-6 py-3.5">Employee</th>
-                    <th className="px-6 py-3.5">Employee ID</th>
-                    <th className="px-6 py-3.5">Username</th>
-                    <th className="px-6 py-3.5">Department</th>
-                    <th className="px-6 py-3.5">Contact</th>
-                    <th className="px-6 py-3.5">Status</th>
-                    <th className="px-6 py-3.5 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                  {filteredUsers.map((u) => (
-                    <tr key={u.id} className="hover:bg-slate-50/70 transition-colors">
-                      {/* Employee Info */}
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-xl bg-violet-100 text-violet-700 flex items-center justify-center font-bold text-xs">
-                            {u.first_name ? u.first_name.charAt(0).toUpperCase() : u.username.charAt(0).toUpperCase()}
-                          </div>
-                          <p className="font-bold text-slate-900">{u.full_name || `${u.first_name} ${u.last_name}`.trim() || u.username}</p>
-                        </div>
-                      </td>
 
-                      {/* Employee ID */}
-                      <td className="px-6 py-4">
-                        <span className="font-mono font-bold text-violet-700 text-[11px]">{u.employee_id || '—'}</span>
-                      </td>
+            {/* Database-Driven Staff Table / Empty State */}
+            <div className="bg-white rounded-3xl border border-violet-100 shadow-sm overflow-hidden">
+              {loading ? (
+                <div className="p-12 text-center text-slate-400 text-xs font-semibold">
+                  Loading department staff records...
+                </div>
+              ) : filteredUsers.length === 0 ? (
+                <div className="p-12 text-center space-y-3">
+                  <div className="w-14 h-14 rounded-3xl bg-violet-50 text-violet-600 mx-auto flex items-center justify-center font-bold">
+                    <HiUsers className="w-7 h-7" />
+                  </div>
+                  <h3 className="text-base font-extrabold text-slate-900">No department staff accounts found.</h3>
+                  <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+                    Staff accounts created by the System Administrator will appear here.
+                  </p>
+                  <div className="pt-2">
+                    <Button
+                      variant="primary"
+                      size="md"
+                      onClick={() => setCreateModalOpen(true)}
+                      className="gap-2 font-bold"
+                      style={{ background: 'linear-gradient(135deg, #A78BFA, #7C5FF0)' }}
+                    >
+                      <HiUserAdd className="w-4 h-4" />
+                      <span>+ Add Department Staff</span>
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase tracking-wider font-semibold">
+                      <tr>
+                        <th className="px-6 py-3.5">Employee</th>
+                        <th className="px-6 py-3.5">Employee ID</th>
+                        <th className="px-6 py-3.5">Username</th>
+                        <th className="px-6 py-3.5">Department</th>
+                        <th className="px-6 py-3.5">Contact</th>
+                        <th className="px-6 py-3.5">Status</th>
+                        <th className="px-6 py-3.5 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                      {filteredUsers.map((u) => (
+                        <tr key={u.id} className="hover:bg-slate-50/70 transition-colors">
+                          {/* Employee Info */}
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-xl bg-violet-100 text-violet-700 flex items-center justify-center font-bold text-xs">
+                                {u.first_name ? u.first_name.charAt(0).toUpperCase() : u.username.charAt(0).toUpperCase()}
+                              </div>
+                              <p className="font-bold text-slate-900">{u.full_name || `${u.first_name} ${u.last_name}`.trim() || u.username}</p>
+                            </div>
+                          </td>
 
-                      {/* Username */}
-                      <td className="px-6 py-4">
-                        <span className="text-slate-700 font-semibold">@{u.username}</span>
-                      </td>
+                          {/* Employee ID */}
+                          <td className="px-6 py-4">
+                            <span className="font-mono font-bold text-violet-700 text-[11px]">{u.employee_id || '—'}</span>
+                          </td>
 
-                      {/* Department */}
-                      <td className="px-6 py-4 font-semibold text-slate-800">
-                        {u.department?.name || 'General Medical'}
-                      </td>
+                          {/* Username */}
+                          <td className="px-6 py-4">
+                            <span className="text-slate-700 font-semibold">@{u.username}</span>
+                          </td>
 
-                      {/* Contact */}
-                      <td className="px-6 py-4 text-slate-600 space-y-0.5">
-                        <p className="flex items-center gap-1">
-                          <HiMail className="w-3.5 h-3.5 text-slate-400" />
-                          <span>{u.email || 'N/A'}</span>
-                        </p>
-                        {u.phone && (
-                          <p className="flex items-center gap-1 text-[11px] text-slate-400">
-                            <HiPhone className="w-3.5 h-3.5 text-slate-400" />
-                            <span>{u.phone}</span>
-                          </p>
-                        )}
-                      </td>
+                          {/* Department */}
+                          <td className="px-6 py-4 font-semibold text-slate-800">
+                            {u.department?.name || 'Unassigned'}
+                          </td>
 
-                      {/* Status */}
-                      <td className="px-6 py-4">
-                        {u.is_active ? (
-                          <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold text-[10px] uppercase inline-flex items-center gap-1">
-                            <HiCheckCircle className="w-3.5 h-3.5 text-emerald-600" /> ACTIVE
-                          </span>
-                        ) : (
-                          <span className="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 font-bold text-[10px] uppercase inline-flex items-center gap-1">
-                            <HiXCircle className="w-3.5 h-3.5 text-rose-600" /> INACTIVE
-                          </span>
-                        )}
-                      </td>
+                          {/* Contact */}
+                          <td className="px-6 py-4 text-slate-600 space-y-0.5">
+                            <p className="flex items-center gap-1">
+                              <HiMail className="w-3.5 h-3.5 text-slate-400" />
+                              <span>{u.email || 'N/A'}</span>
+                            </p>
+                            {u.phone && (
+                              <p className="flex items-center gap-1 text-[11px] text-slate-400">
+                                <HiPhone className="w-3.5 h-3.5 text-slate-400" />
+                                <span>{u.phone}</span>
+                              </p>
+                            )}
+                          </td>
 
-                      {/* Actions */}
-                      <td className="px-6 py-4 text-right space-x-2">
-                        <button
-                          onClick={() => openViewModal(u)}
-                          title="View Details"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
-                        >
-                          <HiEye className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => openEditModal(u)}
-                          title="Edit Staff"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
-                        >
-                          <HiPencil className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => openToggleModal(u)}
-                          title={u.is_active ? 'Deactivate Account' : 'Activate Account'}
-                          className={`p-1.5 rounded-lg transition-colors ${
-                            u.is_active
-                              ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
-                              : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
-                          }`}
-                        >
-                          {u.is_active ? <HiXCircle className="w-4 h-4" /> : <HiCheckCircle className="w-4 h-4" />}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+                          {/* Status */}
+                          <td className="px-6 py-4">
+                            {u.is_active ? (
+                              <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold text-[10px] uppercase inline-flex items-center gap-1">
+                                <HiCheckCircle className="w-3.5 h-3.5 text-emerald-600" /> ACTIVE
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 font-bold text-[10px] uppercase inline-flex items-center gap-1">
+                                <HiXCircle className="w-3.5 h-3.5 text-rose-600" /> INACTIVE
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Actions */}
+                          <td className="px-6 py-4 text-right space-x-2">
+                            <button
+                              onClick={() => openViewModal(u)}
+                              title="View Details"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
+                            >
+                              <HiEye className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => openEditModal(u)}
+                              title="Edit Staff"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                            >
+                              <HiPencil className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => openToggleModal(u)}
+                              title={u.is_active ? 'Deactivate Account' : 'Activate Account'}
+                              className={`p-1.5 rounded-lg transition-colors ${
+                                u.is_active
+                                  ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
+                                  : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
+                              }`}
+                            >
+                              {u.is_active ? <HiXCircle className="w-4 h-4" /> : <HiCheckCircle className="w-4 h-4" />}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+          </div>
+        )}
       </div>
+    </div>
 
       {/* CREATE STAFF MODAL */}
       <AnimatePresence>

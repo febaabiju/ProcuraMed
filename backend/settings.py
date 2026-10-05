@@ -61,6 +61,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'backend.middleware.NoCacheResponseMiddleware',
 ]
 
 ROOT_URLCONF = 'backend.urls'
@@ -119,7 +120,14 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
+from corsheaders.defaults import default_headers
+
 CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    'cache-control',
+    'pragma',
+    'expires',
+]
 
 
 # Static files (CSS, JavaScript, Images)
@@ -160,13 +168,18 @@ SIMPLE_JWT = {
 
 # Email Configuration (Gmail SMTP)
 EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
-EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com').strip()
 EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
 EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True').lower() in ('true', '1', 't')
 EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'False').lower() in ('true', '1', 't')
-EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', 'procuramed2026@gmail.com')
-EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'procuramed2026@gmail.com')
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', 'procuramed2026@gmail.com').strip().strip('\'"')
+
+_raw_email_password = os.environ.get('EMAIL_HOST_PASSWORD', '')
+if '#' in _raw_email_password:
+    _raw_email_password = _raw_email_password.split('#')[0]
+EMAIL_HOST_PASSWORD = _raw_email_password.strip().strip('\'"').replace(' ', '')
+
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'procuramed2026@gmail.com').strip().strip('\'"')
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
 
 # Password Reset Token Timeout (30 minutes in seconds)

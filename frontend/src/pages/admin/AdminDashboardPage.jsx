@@ -70,9 +70,9 @@ const AdminDashboardPage = () => {
     };
   }, []);
 
-  const handleConfirmLogout = () => {
-    logout();
+  const handleConfirmLogout = async () => {
     setShowLogoutModal(false);
+    await logout();
     navigate('/login', { replace: true });
   };
 

@@ -3,6 +3,150 @@ from django.conf import settings
 from django.utils import timezone
 from accounts.models import Department
 
+APPROVED_SPECIALIZATIONS = [
+    'Biomedical Equipment',
+    'Medical & Surgical Equipment',
+    'Laboratory & Diagnostic Equipment',
+    'Radiology & Medical Imaging',
+    'Critical Care & Life-Support Equipment',
+    'IT & Healthcare Technology',
+]
+
+ROUTINE_KEYWORDS = [
+    # Gloves, masks, gauze, consumables
+    'surgical glove', 'examination glove', 'nitrile glove', 'latex glove', 'sterile glove', 'gloves', 'glove',
+    'surgical mask', 'n95 mask', 'face mask', 'medical mask', 'masks', 'mask',
+    'surgical gauze', 'sterile gauze', 'gauze pad', 'gauze', 'cotton roll', 'cotton swab', 'cotton',
+    'bandage', 'bandages', 'dressing', 'wound dressing', 'adhesive tape', 'surgical tape',
+    'disposable syringe', 'hypodermic needle', 'syringe', 'needle', 'cannula', 'iv cannula',
+    'iv infusion set', 'infusion set', 'catheter', 'foley catheter', 'urine bag', 'tubing', 'lancet',
+    'consumable', 'consumables', 'disposable', 'disposables', 'specimen container', 'vacutainer',
+    # Cleaning, housekeeping, sanitation
+    'cleaning', 'sanitizer', 'detergent', 'disinfectant wipe', 'disinfectant', 'mop', 'broom',
+    'trash bag', 'bin', 'soap', 'bleach', 'floor cleaner', 'biohazard bag',
+    # Stationery
+    'stationery', 'paper', 'copier paper', 'pen', 'pens', 'folder', 'folders', 'envelope', 'envelopes',
+    'stapler', 'staples', 'marker', 'notebook', 'toner', 'cartridge', 'ink',
+    # Basic furniture
+    'basic furniture', 'furniture', 'chair', 'chairs', 'desk', 'desks', 'table', 'tables', 'shelf',
+    'cupboard', 'stool', 'filing cabinet', 'cabinet', 'examination couch', 'examination table',
+    # Linen and routine general supplies
+    'linen', 'bedsheet', 'pillow', 'blanket', 'curtain', 'towel', 'scrub suit', 'uniform', 'apron',
+    'general supply', 'general supplies', 'drinking water', 'tea', 'coffee', 'grocery', 'battery', 'batteries'
+]
+
+EXPLICIT_EQUIPMENT_KEYWORDS = [
+    'suction apparatus', 'portable suction', 'apparatus', 'electrosurgical', 'diathermy',
+    'cautery', 'operating table', 'ot light', 'surgical light', 'laparoscope', 'endoscope',
+    'anesthesia workstation', 'surgical microscope', 'analyzer', 'spectrophotometer', 'incubator',
+    'centrifuge', 'pcr machine', 'thermal cycler', 'hematology analyzer', 'biochemistry analyzer',
+    'blood gas analyzer', 'elisa reader', 'x-ray', 'mri', 'ct scanner', 'ultrasound', 'mammography',
+    'c-arm', 'fluoroscopy', 'ventilator', 'patient monitor', 'multipara', 'cardiac monitor',
+    'pulse oximeter', 'resuscitator', 'bipap', 'cpap', 'ecmo', 'defibrillator', 'infusion pump',
+    'syringe pump', 'autoclave', 'sterilizer', 'dialysis machine', 'pacs', 'ris', 'his server',
+    'telemetry', 'workstation', 'server', 'machine', 'machinery', 'equipment', 'scanner'
+]
+
+TECH_DOMAINS = {
+    'Biomedical Equipment': [
+        'biomedical', 'dialysis', 'infusion pump', 'syringe pump', 'autoclave',
+        'sterilizer', 'defibrillator', 'ecg', 'ekg', 'electrosurgical', 'diathermy',
+        'cautery machine', 'medical electronic', 'biomedical sensor'
+    ],
+    'Medical & Surgical Equipment': [
+        'suction apparatus', 'portable suction', 'operating table', 'ot light', 'surgical light',
+        'laparoscope', 'endoscope', 'arthroscope', 'anesthesia workstation', 'surgical microscope',
+        'cautery unit', 'implants', 'surgical laser', 'cryosurgical unit', 'surgical equipment', 'surgical unit'
+    ],
+    'Laboratory & Diagnostic Equipment': [
+        'laboratory', 'analyzer', 'spectrophotometer', 'incubator', 'pcr', 'hematology',
+        'biochemistry', 'centrifuge', 'reagents analyzer', 'blood gas analyzer', 'elisa reader',
+        'biosafety cabinet', 'flow cytometer', 'diagnostic machine'
+    ],
+    'Radiology & Medical Imaging': [
+        'radiology', 'x-ray', 'mri', 'ct scanner', 'ultrasound', 'mammography', 'fluoroscopy',
+        'c-arm', 'imaging system', 'radiography', 'doppler', 'pet scan'
+    ],
+    'Critical Care & Life-Support Equipment': [
+        'ventilator', 'icu', 'critical care', 'life-support', 'patient monitor', 'multipara',
+        'cardiac monitor', 'pulse oximeter', 'resuscitator', 'bipap', 'cpap', 'ecmo',
+        'defibrillator monitor', 'capnograph'
+    ],
+    'IT & Healthcare Technology': [
+        'pacs', 'ris', 'his', 'emr', 'ehr', 'telemedicine', 'medical server', 'telemetry',
+        'healthcare network', 'clinical software', 'dicom', 'workstation', 'firewall', 'server'
+    ]
+}
+
+
+def evaluate_item_technical_requirement(item_name: str, category: str = "", specifications: str = ""):
+    """
+    Evaluates whether an individual item requires technical officer evaluation.
+    Returns tuple: (is_technical: bool, suggested_specialization: str or None, reason: str)
+    """
+    name_str = (item_name or "").lower().strip()
+    cat_str = (category or "").lower().strip()
+    spec_str = (specifications or "").lower().strip()
+    full_text = f"{name_str} {cat_str} {spec_str}"
+
+    if not full_text.strip():
+        return False, None, "Item details are empty."
+
+    # 1. Check if item contains explicit specialized equipment keywords or technical service indicators
+    has_explicit_equipment = any(kw in full_text for kw in EXPLICIT_EQUIPMENT_KEYWORDS)
+    has_tech_service = any(kw in full_text for kw in [
+        'installation', 'calibration', 'calibrated', 'integration',
+        'specialized maintenance', 'preventive maintenance', 'electronic medical machine'
+    ])
+
+    # 2. Check if item matches routine non-technical consumable/general keywords
+    is_routine_name = any(kw in name_str for kw in ROUTINE_KEYWORDS)
+    is_routine_overall = any(kw in full_text for kw in ROUTINE_KEYWORDS)
+
+    # If it's a routine consumable/general item (like gloves, masks, gauze, paper, chairs)
+    # and has NO explicit complex equipment keywords (like "suction apparatus", "infusion pump", etc.)
+    if is_routine_name and not has_explicit_equipment and not has_tech_service:
+        return False, None, "Routine consumable or general hospital supply not requiring technical evaluation."
+
+    # If category is routine consumables / stationery / general supplies and not explicit equipment
+    routine_cats = ['consumable', 'supplies', 'stationery', 'furniture', 'housekeeping', 'facility']
+    if any(rc in cat_str for rc in routine_cats) and not has_explicit_equipment and not has_tech_service:
+        return False, None, "Standard routine supplies not requiring technical evaluation."
+
+    # 3. Match against the 6 approved technical specializations
+    best_spec = None
+    max_score = 0
+
+    # Direct category match if category itself is an approved specialization
+    for approved in APPROVED_SPECIALIZATIONS:
+        if approved.lower() == cat_str:
+            best_spec = approved
+            max_score = 10
+            break
+
+    for spec, keywords in TECH_DOMAINS.items():
+        score = sum(2 for kw in keywords if kw in name_str)
+        score += sum(1 for kw in keywords if kw in spec_str)
+        if spec.lower() in cat_str or any(kw in cat_str for kw in keywords):
+            score += 4
+        if score > max_score:
+            max_score = score
+            best_spec = spec
+
+    if best_spec and max_score > 0:
+        return True, best_spec, f"Specialized item requiring {best_spec} evaluation."
+
+    # 4. If explicit equipment or technical service was indicated, default to general surgical or biomedical equipment
+    if has_explicit_equipment or has_tech_service:
+        default_spec = 'Biomedical Equipment' if ('biomedical' in full_text or 'electronic' in full_text) else 'Medical & Surgical Equipment'
+        return True, default_spec, f"Specialized medical equipment requiring {default_spec} evaluation."
+
+    # If routine overall and not triggered by technical domains
+    if is_routine_overall:
+        return False, None, "Routine supply not requiring technical evaluation."
+
+    return False, None, "Standard hospital item not requiring specialized technical evaluation."
+
 
 class Requisition(models.Model):
     class PriorityChoices(models.TextChoices):
@@ -13,6 +157,10 @@ class Requisition(models.Model):
 
     class StatusChoices(models.TextChoices):
         DRAFT = 'DRAFT', 'Draft'
+        SUBMITTED = 'SUBMITTED', 'Submitted'
+        RETURNED = 'RETURNED', 'Returned for Correction'
+        PENDING_TECHNICAL_EVALUATION = 'PENDING_TECHNICAL_EVALUATION', 'Pending Technical Evaluation'
+        PENDING_COMMITTEE_REVIEW = 'PENDING_COMMITTEE_REVIEW', 'Pending Committee Review'
         PENDING_APPROVAL = 'PENDING_APPROVAL', 'Pending Approval'
         APPROVED = 'APPROVED', 'Approved'
         REJECTED = 'REJECTED', 'Rejected'
@@ -53,6 +201,25 @@ class Requisition(models.Model):
         help_text="One of the 6 approved technical specializations required to evaluate this procurement."
     )
     justification = models.TextField(blank=True, null=True)
+    supporting_document = models.FileField(
+        upload_to='requisitions/documents/',
+        null=True,
+        blank=True,
+        verbose_name="Supporting Document"
+    )
+    review_comments = models.TextField(
+        blank=True, null=True, verbose_name="Review Comments / Return Reason"
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='reviewed_requisitions',
+        verbose_name="Reviewed By"
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True, verbose_name="Reviewed At")
+    submitted_at = models.DateTimeField(null=True, blank=True, verbose_name="Submitted At")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -62,90 +229,80 @@ class Requisition(models.Model):
         verbose_name_plural = 'Purchase Requisitions'
         ordering = ['-created_at']
 
+    def get_technical_evaluation_advisory(self):
+        """
+        Advisory technical evaluation recommendation.
+        Evaluates each requisition item individually.
+        If at least one item requires specialized technical evaluation,
+        the system recommends technical evaluation for the requisition.
+        """
+        items = list(self.items.all()) if self.pk else []
+        if not items:
+            is_tech, spec, reason = evaluate_item_technical_requirement(
+                item_name=self.title or '',
+                category=self.category or '',
+                specifications=self.justification or ''
+            )
+            return {
+                'recommended': is_tech,
+                'reason': reason if is_tech else "No items present to trigger technical evaluation.",
+                'suggested_specialization': spec,
+                'triggering_items': [self.title] if (is_tech and self.title) else [],
+                'item_evaluations': []
+            }
+
+        item_evaluations = []
+        triggering_items = []
+        spec_counts = {}
+
+        for item in items:
+            is_tech, spec, reason = evaluate_item_technical_requirement(
+                item_name=item.item_name,
+                category=item.category or '',
+                specifications=item.specifications or ''
+            )
+            item_evaluations.append({
+                'id': item.id,
+                'item_name': item.item_name,
+                'category': item.category,
+                'is_technical': is_tech,
+                'suggested_specialization': spec,
+                'reason': reason
+            })
+            if is_tech:
+                triggering_items.append(item.item_name)
+                if spec:
+                    spec_counts[spec] = spec_counts.get(spec, 0) + 1
+
+        if triggering_items:
+            suggested_spec = max(spec_counts.items(), key=lambda x: x[1])[0] if spec_counts else 'Biomedical Equipment'
+            rec_reason = (
+                f"Technical evaluation is recommended because {len(triggering_items)} item(s) "
+                f"require specialized technical review: {', '.join(triggering_items)}."
+            )
+            return {
+                'recommended': True,
+                'reason': rec_reason,
+                'suggested_specialization': suggested_spec,
+                'triggering_items': triggering_items,
+                'item_evaluations': item_evaluations
+            }
+        else:
+            return {
+                'recommended': False,
+                'reason': "All requested items are routine consumables or standard hospital supplies not requiring technical evaluation.",
+                'suggested_specialization': None,
+                'triggering_items': [],
+                'item_evaluations': item_evaluations
+            }
+
     def determine_technical_requirement(self):
         """
-        Determines whether technical evaluation is required based on item category,
-        title, and technical complexity, rather than solely on the department.
-        Returns tuple: (requires_tech_eval: bool, technical_specialization: str or None)
+        Advisory recommendation wrapper returning (is_recommended: bool, suggested_specialization: str or None).
+        The actual routing decision is made exclusively by the Purchase Officer.
         """
-        APPROVED_SPECIALIZATIONS = [
-            'Biomedical Equipment',
-            'Medical & Surgical Equipment',
-            'Laboratory & Diagnostic Equipment',
-            'Radiology & Medical Imaging',
-            'Critical Care & Life-Support Equipment',
-            'IT & Healthcare Technology',
-        ]
-
-        # Explicit category match if category matches an approved specialization
-        if self.category and self.category in APPROVED_SPECIALIZATIONS:
-            return True, self.category
-
-        text_to_evaluate = f"{self.category or ''} {self.title or ''} {self.justification or ''}".lower()
-
-        # Routine non-technical keywords that do NOT require technical officer evaluation
-        routine_keywords = [
-            'cleaning', 'sanitizer', 'detergent', 'disinfectant wipe', 'mop', 'broom', 'trash bag', 'bin',
-            'stationery', 'paper', 'pen', 'folder', 'envelope', 'stapler', 'marker', 'notebook',
-            'furniture', 'chair', 'desk', 'table', 'shelf', 'cupboard', 'stool', 'filing cabinet',
-            'linen', 'bedsheet', 'pillow', 'blanket', 'curtain', 'towel', 'scrub suit', 'uniform',
-            'general supply', 'drinking water', 'tea', 'coffee', 'grocery', 'consumable'
-        ]
-
-        # If it's a routine non-technical item and doesn't specify heavy clinical equipment, exempt it
-        is_routine = any(kw in text_to_evaluate for kw in routine_keywords)
-        is_explicitly_equipment = any(kw in text_to_evaluate for kw in ['equipment', 'machine', 'analyzer', 'scanner', 'ventilator', 'ultrasound', 'microscope'])
-
-        if is_routine and not is_explicitly_equipment:
-            return False, None
-
-        # Domain keywords for the 6 approved technical specializations
-        tech_domains = {
-            'Biomedical Equipment': [
-                'biomedical', 'dialysis', 'infusion pump', 'syringe pump', 'autoclave',
-                'sterilizer', 'defibrillator', 'ecg', 'ekg', 'electrosurgical', 'diathermy'
-            ],
-            'Medical & Surgical Equipment': [
-                'surgical', 'operating table', 'ot light', 'laparoscope', 'endoscope', 'forceps',
-                'cautery', 'anesthesia workstation', 'surgical microscope', 'suction apparatus', 'implants'
-            ],
-            'Laboratory & Diagnostic Equipment': [
-                'laboratory', 'analyzer', 'spectrophotometer', 'incubator', 'pcr', 'hematology',
-                'biochemistry', 'centrifuge', 'reagents analyzer', 'blood gas analyzer'
-            ],
-            'Radiology & Medical Imaging': [
-                'radiology', 'x-ray', 'mri', 'ct scanner', 'ultrasound', 'mammography', 'fluoroscopy',
-                'c-arm', 'imaging', 'radiography', 'doppler', 'pet scan'
-            ],
-            'Critical Care & Life-Support Equipment': [
-                'ventilator', 'icu', 'critical care', 'life-support', 'patient monitor', 'multipara',
-                'cardiac monitor', 'pulse oximeter', 'resuscitator', 'bipap', 'cpap', 'ecmo'
-            ],
-            'IT & Healthcare Technology': [
-                'pacs', 'ris', 'his', 'emr', 'ehr', 'telemedicine', 'medical server', 'telemetry',
-                'healthcare network', 'clinical software', 'dicom', 'workstation', 'firewall', 'server'
-            ]
-        }
-
-        best_spec = None
-        max_score = 0
-        for spec, keywords in tech_domains.items():
-            score = sum(1 for kw in keywords if kw in text_to_evaluate)
-            # Bonus if category explicitly aligns with the specialization
-            if self.category and (spec.lower() in self.category.lower() or any(kw in self.category.lower() for kw in keywords)):
-                score += 3
-            if score > max_score:
-                max_score = score
-                best_spec = spec
-
-        if best_spec and max_score > 0:
-            return True, best_spec
-
-        # If marked as equipment/device but no specific keyword matched, default to general medical equipment
-        if is_explicitly_equipment:
-            return True, 'Medical & Surgical Equipment'
-
-        return False, None
+        advisory = self.get_technical_evaluation_advisory()
+        return advisory['recommended'], advisory['suggested_specialization']
 
     def save(self, *args, **kwargs):
         if not self.req_number:
@@ -153,17 +310,58 @@ class Requisition(models.Model):
             count = Requisition.objects.filter(created_at__year=year).count() + 1
             self.req_number = f"REQ-{year}-{count:05d}"
 
-        # If requires_technical_evaluation is not explicitly set, determine it dynamically from item details
-        if not self.id and not self.requires_technical_evaluation:
-            is_tech, spec = self.determine_technical_requirement()
-            self.requires_technical_evaluation = is_tech
-            if is_tech and not self.technical_specialization:
-                self.technical_specialization = spec
+        if self.status == self.StatusChoices.SUBMITTED and not self.submitted_at:
+            self.submitted_at = timezone.now()
 
+        # NOTE: Department Staff submission does NOT decide whether technical evaluation is required.
+        # The Purchase Officer decides this explicitly during the Purchase Officer review stage.
         super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.req_number} - {self.title}"
+
+
+class RequisitionItem(models.Model):
+    requisition = models.ForeignKey(
+        Requisition, on_delete=models.CASCADE, related_name='items'
+    )
+    item_name = models.CharField(max_length=255, verbose_name="Item / Product Name")
+    category = models.CharField(max_length=150, blank=True, null=True, verbose_name="Category")
+    quantity = models.PositiveIntegerField(default=1, verbose_name="Quantity")
+    specifications = models.TextField(blank=True, null=True, verbose_name="Specifications")
+    estimated_unit_price = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0.00, verbose_name="Estimated Unit Price"
+    )
+    total_price = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0.00, verbose_name="Total Price"
+    )
+    required_date = models.DateField(null=True, blank=True, verbose_name="Required Date")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'tbl_requisition_item'
+        verbose_name = 'Requisition Item'
+        verbose_name_plural = 'Requisition Items'
+        ordering = ['id']
+
+    def determine_technical_requirement_details(self):
+        """
+        Evaluates technical evaluation advisory details for this individual item.
+        """
+        return evaluate_item_technical_requirement(
+            item_name=self.item_name,
+            category=self.category or '',
+            specifications=self.specifications or ''
+        )
+
+    def save(self, *args, **kwargs):
+        if self.quantity and self.estimated_unit_price is not None:
+            self.total_price = self.quantity * self.estimated_unit_price
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.item_name} (x{self.quantity}) for {self.requisition.req_number}"
 
 
 class Approval(models.Model):

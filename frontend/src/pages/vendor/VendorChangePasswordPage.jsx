@@ -23,6 +23,11 @@ const VendorChangePasswordPage = () => {
   const [success, setSuccess] = useState('');
   const navigate = useNavigate();
 
+  const handleSignOut = async () => {
+    await logout();
+    navigate('/login', { replace: true });
+  };
+
   const handlePasswordChange = (e) => {
     const val = e.target.value;
     setNewPassword(val);
@@ -223,7 +228,7 @@ const VendorChangePasswordPage = () => {
         <div className="text-center pt-2 text-xs border-t border-slate-100">
           <button
             type="button"
-            onClick={logout}
+            onClick={handleSignOut}
             className="text-slate-400 hover:text-slate-600 font-semibold"
           >
             Sign out of account

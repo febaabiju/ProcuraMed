@@ -116,8 +116,8 @@ const TechnicalOfficerDashboardPage = () => {
   };
 
   const formatCurrency = (amount) => {
-    if (amount === undefined || amount === null || amount === '') return 'N/A';
-    return `$${Number(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (amount === undefined || amount === null || amount === '') return '₹0.00';
+    return `₹${Number(amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   const getStatusBadge = (status) => {
