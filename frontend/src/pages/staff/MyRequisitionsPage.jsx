@@ -69,6 +69,8 @@ const MyRequisitionsPage = () => {
         req.justification?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         req.requested_by_details?.employee_id?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         req.department_details?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        req.assigned_purchase_officer_employee_id?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        req.assigned_purchase_officer_details?.employee_id?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         req.assigned_purchase_officer_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         req.assigned_purchase_officer_details?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         req.assigned_purchase_officer_details?.username?.toLowerCase().includes(searchQuery.toLowerCase());
@@ -335,11 +337,10 @@ const MyRequisitionsPage = () => {
                   {filteredRequisitions.map((req) => {
                     const isDraft = req.status === 'DRAFT';
                     const itemsCount = req.items?.length || 0;
-                    const poName =
-                      req.assigned_purchase_officer_name ||
-                      req.assigned_purchase_officer_details?.full_name ||
-                      req.assigned_purchase_officer_details?.username;
-                    const isAssigned = !!(req.assigned_purchase_officer || poName);
+                    const poEmpId =
+                      req.assigned_purchase_officer_employee_id ||
+                      req.assigned_purchase_officer_details?.employee_id ||
+                      (req.assigned_purchase_officer ? req.assigned_purchase_officer_details?.username : '');
                     return (
                       <tr key={req.id} className="hover:bg-slate-50/60 transition-colors">
                         {/* Requisition Number */}
@@ -358,30 +359,15 @@ const MyRequisitionsPage = () => {
                         </td>
 
                         {/* Assigned Purchase Officer */}
-                        <td className="py-4 px-5 whitespace-nowrap">
-                          {isAssigned ? (
-                            <div>
-                              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
-                                Assigned Purchase Officer
-                              </span>
-                              <span className="font-bold text-slate-900 block text-xs mt-0.5">
-                                {poName}
-                              </span>
-                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 mt-0.5">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                Assigned
-                              </span>
-                            </div>
+                        <td className="py-4 px-5 whitespace-nowrap text-xs">
+                          {poEmpId ? (
+                            <span className="font-bold text-slate-800">
+                              {poEmpId}
+                            </span>
                           ) : (
-                            <div>
-                              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
-                                Assigned Purchase Officer
-                              </span>
-                              <span className="inline-flex items-center gap-1 text-slate-500 text-xs font-medium mt-0.5">
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                                Pending Assignment
-                              </span>
-                            </div>
+                            <span className="text-slate-400 font-medium">
+                              Pending Assignment
+                            </span>
                           )}
                         </td>
 

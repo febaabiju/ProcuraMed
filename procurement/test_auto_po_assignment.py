@@ -52,6 +52,7 @@ class AutomaticPurchaseOfficerAssignmentTests(TestCase):
             password='TestPassword123!',
             first_name='Officer',
             last_name='One',
+            employee_id='PO-ASSIGN-01',
             role=cls.po_role,
             department=cls.admin_dept
         )
@@ -61,6 +62,7 @@ class AutomaticPurchaseOfficerAssignmentTests(TestCase):
             password='TestPassword123!',
             first_name='Officer',
             last_name='Two',
+            employee_id='PO-ASSIGN-02',
             role=cls.po_role,
             department=cls.admin_dept
         )
@@ -70,6 +72,7 @@ class AutomaticPurchaseOfficerAssignmentTests(TestCase):
             password='TestPassword123!',
             first_name='Officer',
             last_name='Three',
+            employee_id='PO-ASSIGN-03',
             role=cls.po_role,
             department=cls.admin_dept
         )
@@ -412,18 +415,21 @@ class AutomaticPurchaseOfficerAssignmentTests(TestCase):
         assigned_item = next(r for r in results if r['req_number'] == 'REQ-STAFF-VIS-01')
         self.assertEqual(assigned_item['assigned_purchase_officer'], self.po_1.id)
         self.assertEqual(assigned_item['assigned_purchase_officer_name'], self.po_1.get_full_name() or self.po_1.username)
+        self.assertEqual(assigned_item['assigned_purchase_officer_employee_id'], self.po_1.employee_id)
         self.assertEqual(assigned_item['assignment_status'], 'Assigned')
         self.assertIsNotNone(assigned_item['assigned_purchase_officer_details'])
 
         unassigned_item = next(r for r in results if r['req_number'] == 'REQ-STAFF-VIS-02')
         self.assertIsNone(unassigned_item['assigned_purchase_officer'])
         self.assertIsNone(unassigned_item['assigned_purchase_officer_name'])
+        self.assertIsNone(unassigned_item['assigned_purchase_officer_employee_id'])
         self.assertEqual(unassigned_item['assignment_status'], 'Pending Assignment')
 
         # 2. Test Details Endpoint (/api/procurement/requisitions/{id}/)
         res_detail = self.client.get(f'/api/procurement/requisitions/{req_assigned.id}/')
         self.assertEqual(res_detail.status_code, status.HTTP_200_OK)
         self.assertEqual(res_detail.data['assigned_purchase_officer_name'], self.po_1.get_full_name() or self.po_1.username)
+        self.assertEqual(res_detail.data['assigned_purchase_officer_employee_id'], self.po_1.employee_id)
         self.assertEqual(res_detail.data['assignment_status'], 'Assigned')
 
     def test_10_department_staff_cannot_access_other_staff_requisitions(self):
@@ -505,4 +511,108 @@ class AutomaticPurchaseOfficerAssignmentTests(TestCase):
         recent = res.data.get('recent_requests', [])
         req_item = next(r for r in recent if r['req_number'] == 'REQ-DASH-STAFF-01')
         self.assertEqual(req_item['assigned_purchase_officer_name'], self.po_2.get_full_name() or self.po_2.username)
+        self.assertEqual(req_item['assigned_purchase_officer_employee_id'], self.po_2.employee_id)
         self.assertEqual(req_item['assignment_status'], 'Assigned')
+
+    def test_13_ongoing_stages_count_towards_workload_and_lower_workload_po_is_selected(self):
+        """
+        Verify that ongoing requisitions across workflow stages (Technical Evaluation, Committee Review,
+        Approved, RFQ Issued) continue to count toward a Purchase Officer's active workload.
+        Terminal statuses (COMPLETED, REJECTED, CANCELLED) are excluded.
+        """
+        # PO 1 has 3 active requisitions that moved to Technical Evaluation
+        for i in range(3):
+            Requisition.objects.create(
+                req_number=f'REQ-TECH-EVAL-{i}',
+                title=f'Requisition in Tech Eval {i}',
+                department=self.surgery_dept,
+                requested_by=self.staff_user,
+                status=Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION,
+                assigned_purchase_officer=self.po_1,
+                assigned_at=timezone.now(),
+                submitted_at=timezone.now(),
+                estimated_budget=Decimal('15000.00')
+            )
+
+        # PO 2 has 1 active requisition in Committee Review and 1 completed
+        Requisition.objects.create(
+            req_number='REQ-COMM-REV-1',
+            title='Requisition in Committee Review',
+            department=self.surgery_dept,
+            requested_by=self.staff_user,
+            status=Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW,
+            assigned_purchase_officer=self.po_2,
+            assigned_at=timezone.now(),
+            submitted_at=timezone.now(),
+            estimated_budget=Decimal('20000.00')
+        )
+        Requisition.objects.create(
+            req_number='REQ-PO2-COMPLETED',
+            title='PO2 Completed Requisition',
+            department=self.surgery_dept,
+            requested_by=self.staff_user,
+            status=Requisition.StatusChoices.COMPLETED,
+            assigned_purchase_officer=self.po_2,
+            assigned_at=timezone.now(),
+            submitted_at=timezone.now(),
+            estimated_budget=Decimal('20000.00')
+        )
+
+        # PO 3 has 0 active requisitions (2 completed, 1 rejected, 1 cancelled)
+        Requisition.objects.create(
+            req_number='REQ-PO3-COMPLETED',
+            title='PO3 Completed Requisition',
+            department=self.surgery_dept,
+            requested_by=self.staff_user,
+            status=Requisition.StatusChoices.COMPLETED,
+            assigned_purchase_officer=self.po_3,
+            assigned_at=timezone.now(),
+            estimated_budget=Decimal('10000.00')
+        )
+        Requisition.objects.create(
+            req_number='REQ-PO3-REJECTED',
+            title='PO3 Rejected Requisition',
+            department=self.surgery_dept,
+            requested_by=self.staff_user,
+            status=Requisition.StatusChoices.REJECTED,
+            assigned_purchase_officer=self.po_3,
+            assigned_at=timezone.now(),
+            estimated_budget=Decimal('10000.00')
+        )
+        Requisition.objects.create(
+            req_number='REQ-PO3-CANCELLED',
+            title='PO3 Cancelled Requisition',
+            department=self.surgery_dept,
+            requested_by=self.staff_user,
+            status=Requisition.StatusChoices.CANCELLED,
+            assigned_purchase_officer=self.po_3,
+            assigned_at=timezone.now(),
+            estimated_budget=Decimal('10000.00')
+        )
+
+        # Now: PO 1 has workload 3, PO 2 has workload 1, PO 3 has workload 0.
+        # A new submitted requisition must be assigned to PO 3 (lowest workload = 0)!
+        new_req1 = Requisition.objects.create(
+            req_number='REQ-NEW-TEST-WORKLOAD-1',
+            title='New Requisition 1',
+            department=self.surgery_dept,
+            requested_by=self.staff_user,
+            status=Requisition.StatusChoices.SUBMITTED,
+            submitted_at=timezone.now(),
+            estimated_budget=Decimal('12000.00')
+        )
+        self.assertEqual(new_req1.assigned_purchase_officer, self.po_3)
+
+        # Now PO 3 has workload 1, PO 2 has workload 1, PO 1 has workload 3.
+        # Another new requisition must be assigned to PO 2 or PO 3, NEVER PO 1!
+        new_req2 = Requisition.objects.create(
+            req_number='REQ-NEW-TEST-WORKLOAD-2',
+            title='New Requisition 2',
+            department=self.surgery_dept,
+            requested_by=self.staff_user,
+            status=Requisition.StatusChoices.SUBMITTED,
+            submitted_at=timezone.now(),
+            estimated_budget=Decimal('12000.00')
+        )
+        self.assertIn(new_req2.assigned_purchase_officer, [self.po_2, self.po_3])
+        self.assertNotEqual(new_req2.assigned_purchase_officer, self.po_1)

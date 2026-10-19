@@ -3,6 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -13,11 +14,14 @@ from accounts.models import AuditLog
 from accounts.permissions import IsDepartmentStaff, IsPurchaseOfficer, IsCommitteeMember, IsTechnicalOfficer
 from inventory.models import Delivery
 from .models import (
-    Requisition, Approval, QuotationRequest, Quotation, QuotationItem, PurchaseOrder, PurchaseOrderItem
+    Requisition, Approval, QuotationRequest, Quotation, QuotationItem, PurchaseOrder, PurchaseOrderItem,
+    TechnicalEvaluation,
+    NON_TECHNICAL_CATEGORIES, CATEGORY_TO_SPECIALIZATION
 )
 from .serializers import (
     RequisitionSerializer, ApprovalSerializer, QuotationRequestSerializer,
-    QuotationSerializer, QuotationItemSerializer, PurchaseOrderSerializer, PurchaseOrderItemSerializer
+    QuotationSerializer, QuotationItemSerializer, PurchaseOrderSerializer, PurchaseOrderItemSerializer,
+    TechnicalEvaluationSerializer
 )
 from .permissions import IsRequisitionOwnerOrOfficer, IsCommitteeOrAdmin, IsPurchaseOfficerOrAdmin
 from .filters import RequisitionFilter, QuotationRequestFilter, QuotationFilter, PurchaseOrderFilter
@@ -25,7 +29,7 @@ from .constants import DEPARTMENT_CATEGORY_MAP, get_allowed_categories_for_depar
 
 
 class RequisitionViewSet(viewsets.ModelViewSet):
-    queryset = Requisition.objects.select_related('department', 'requested_by', 'assigned_purchase_officer').prefetch_related('approvals', 'items').all()
+    queryset = Requisition.objects.select_related('department', 'requested_by', 'assigned_purchase_officer', 'assigned_technical_officer').prefetch_related('approvals', 'items').all()
     serializer_class = RequisitionSerializer
     permission_classes = [IsAuthenticated, IsRequisitionOwnerOrOfficer]
     filterset_class = RequisitionFilter
@@ -37,6 +41,8 @@ class RequisitionViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated(), IsPurchaseOfficerOrAdmin()]
         elif self.action == 'approve':
             return [IsAuthenticated(), IsCommitteeOrAdmin()]
+        elif self.action == 'evaluate':
+            return [IsAuthenticated(), IsTechnicalOfficer()]
         return super().get_permissions()
 
     def get_queryset(self):
@@ -47,12 +53,19 @@ class RequisitionViewSet(viewsets.ModelViewSet):
         r_name = user.role.name.lower() if user.role else ''
         is_staff_role = 'staff' in r_name or 'department' in r_name
         is_po = any(x in r_name for x in ['purchase', 'officer']) and ('staff' not in r_name)
+        is_to = 'technical' in r_name
         is_admin_or_super = user.is_superuser or user.is_staff or 'admin' in r_name
 
-        qs = Requisition.objects.select_related('department', 'requested_by', 'assigned_purchase_officer').prefetch_related('approvals', 'items')
+        qs = Requisition.objects.select_related(
+            'department', 'requested_by', 'assigned_purchase_officer', 'assigned_technical_officer'
+        ).prefetch_related('approvals', 'items', 'technical_evaluations')
 
         if is_admin_or_super:
             return qs
+
+        if is_to:
+            # Technical Officers can ONLY see requisitions assigned to them (or requested by them)
+            return qs.filter(Q(assigned_technical_officer=user) | Q(requested_by=user))
 
         if is_po:
             if self.action == 'review':
@@ -64,7 +77,7 @@ class RequisitionViewSet(viewsets.ModelViewSet):
             )
 
         is_privileged = (
-            any(role in r_name for role in ['admin', 'committee', 'technical'])
+            any(role in r_name for role in ['admin', 'committee'])
         )
 
         if (is_staff_role and not is_privileged) or not is_privileged:
@@ -101,6 +114,12 @@ class RequisitionViewSet(viewsets.ModelViewSet):
         r_name = user.role.name.lower() if user.role else ''
         is_staff_role = 'staff' in r_name or 'department' in r_name
         is_po = any(x in r_name for x in ['purchase', 'officer']) and ('staff' not in r_name)
+        is_to = 'technical' in r_name
+
+        # Technical Officers cannot directly edit purchase request details
+        if is_to and not (user.is_superuser or user.is_staff):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Technical Officers cannot edit purchase requests. Original request fields are strictly read-only.')
 
         # Purchase Officers cannot directly edit submitted requisition details
         if is_po and not (user.is_superuser or user.is_staff):
@@ -225,6 +244,8 @@ class RequisitionViewSet(viewsets.ModelViewSet):
         # Ensure technical evaluation decision is fresh for Purchase Officer review
         requisition.requires_technical_evaluation = False
         requisition.technical_specialization = None
+        requisition.assigned_technical_officer = None
+        requisition.technical_assigned_at = None
         requisition.save()
 
         # Record submission / resubmission in AuditLog
@@ -327,30 +348,66 @@ class RequisitionViewSet(viewsets.ModelViewSet):
             if action_type in ['APPROVE', 'PROCEED']:
                 if requires_tech:
                     # PROCEED WITH TECHNICAL EVALUATION:
-                    # Set status to PENDING_TECHNICAL_EVALUATION, requires_technical_evaluation=True,
-                    # set appropriate technical_specialization, and route to Technical Officer.
-                    spec = request.data.get('technical_specialization')
-                    if not spec or not str(spec).strip():
+                    # 1. Determine the required Technical Specialization based on the purchase item's existing category:
+                    cat_spec = requisition.get_requisition_technical_specialization()
+
+                    # Check PO explicit specialization input if provided
+                    provided_spec = request.data.get('technical_specialization')
+                    if provided_spec and str(provided_spec).strip():
+                        spec = str(provided_spec).strip()
+                    else:
                         advisory = requisition.get_technical_evaluation_advisory()
-                        spec = advisory.get('suggested_specialization') or 'Biomedical Equipment'
+                        adv_spec = advisory.get('suggested_specialization')
+                        cat_spec = requisition.get_requisition_technical_specialization()
+                        spec = adv_spec or cat_spec or 'Biomedical Equipment'
+                        if spec in ['Medical & Surgical Equipment', 'Critical Care & Life-Support Equipment']:
+                            spec = 'Medical, Surgical & Critical Care Equipment'
 
                     requisition.requires_technical_evaluation = True
                     requisition.technical_specialization = spec
                     requisition.status = Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION
                     next_stage = f"Technical Officer Evaluation ({spec})"
 
+                    # 2. Check if purchase category requires Technical Evaluation (Requirement 7):
+                    item_cat = requisition.category
+                    if not item_cat and requisition.items.exists():
+                        item_cat = requisition.items.first().category
+
+                    is_non_tech = False
+                    if item_cat:
+                        clean_cat = str(item_cat).strip().lower()
+                        if clean_cat in [c.lower() for c in NON_TECHNICAL_CATEGORIES]:
+                            is_non_tech = True
+
+                    if is_non_tech:
+                        # Requirement 7: If the purchase category does not require Technical Evaluation, do not assign a Technical Officer.
+                        requisition.assigned_technical_officer = None
+                        requisition.technical_assigned_at = None
+                        assigned_to = None
+                    else:
+                        # 3. Match category to Technical Specialization -> Eligible Technical Officers -> Workload
+                        assigned_to = requisition.assign_technical_officer(specialization=spec, save=False)
+
+                    to_tag = ""
+                    if assigned_to:
+                        to_tag = f" Assigned to Technical Officer @{assigned_to.username} ({assigned_to.get_full_name() or assigned_to.username})."
+                    elif is_non_tech:
+                        to_tag = " Purchase category does not require Technical Evaluation; Technical Officer assignment bypassed."
+                    else:
+                        to_tag = f" No eligible active Technical Officer found for specialization '{spec}'; request remains unassigned."
+
                     Approval.objects.create(
                         requisition=requisition,
                         approved_by=user,
                         stage='Purchase Officer Review',
                         status=Approval.StatusChoices.APPROVED,
-                        comments=reason or f"Purchase Officer proceeded requisition for Technical Officer Evaluation ({spec})."
+                        comments=reason or f"Purchase Officer proceeded requisition for Technical Officer Evaluation ({spec}).{to_tag}"
                     )
                     AuditLog.objects.create(
                         user=user,
                         action='Purchase Officer proceeded requisition for Technical Officer Evaluation',
                         module='Purchase Requisition',
-                        description=f"Purchase Officer @{user.username} ({reviewer_name}) proceeded requisition {requisition.req_number} ('{requisition.title}') for Technical Officer Evaluation ({spec}). Remarks: {reason or 'Proceeded for Technical Officer Evaluation.'}"
+                        description=f"Purchase Officer @{user.username} ({reviewer_name}) proceeded requisition {requisition.req_number} ('{requisition.title}') for Technical Officer Evaluation ({spec}). Remarks: {reason or 'Proceeded for Technical Officer Evaluation.'}{to_tag}"
                     )
                     action_result = 'Requisition Proceeded for Technical Officer Evaluation'
 
@@ -360,6 +417,8 @@ class RequisitionViewSet(viewsets.ModelViewSet):
                     # technical_specialization=None, and route directly to Procurement Committee.
                     requisition.requires_technical_evaluation = False
                     requisition.technical_specialization = None
+                    requisition.assigned_technical_officer = None
+                    requisition.technical_assigned_at = None
                     requisition.status = Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW
                     next_stage = "Procurement Committee Review"
 
@@ -384,6 +443,8 @@ class RequisitionViewSet(viewsets.ModelViewSet):
                 requisition.status = Requisition.StatusChoices.RETURNED
                 requisition.requires_technical_evaluation = False
                 requisition.technical_specialization = None
+                requisition.assigned_technical_officer = None
+                requisition.technical_assigned_at = None
                 AuditLog.objects.create(
                     user=user,
                     action='Purchase Officer Requisition Returned',
@@ -396,6 +457,10 @@ class RequisitionViewSet(viewsets.ModelViewSet):
                 # REJECT:
                 # Requires rejection reason, sets status to REJECTED, creates NO approval record.
                 requisition.status = Requisition.StatusChoices.REJECTED
+                requisition.requires_technical_evaluation = False
+                requisition.technical_specialization = None
+                requisition.assigned_technical_officer = None
+                requisition.technical_assigned_at = None
                 AuditLog.objects.create(
                     user=user,
                     action='Purchase Officer Requisition Rejected',
@@ -432,6 +497,12 @@ class RequisitionViewSet(viewsets.ModelViewSet):
                 from rest_framework.exceptions import PermissionDenied
                 raise PermissionDenied("You do not have permission to access this supporting document.")
             if requisition.assigned_purchase_officer is None and requisition.reviewed_by and requisition.reviewed_by != user:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("You do not have permission to access this supporting document.")
+
+        is_to = 'technical' in r_name
+        if is_to and not is_admin_or_super:
+            if requisition.assigned_technical_officer and requisition.assigned_technical_officer != user:
                 from rest_framework.exceptions import PermissionDenied
                 raise PermissionDenied("You do not have permission to access this supporting document.")
 
@@ -493,6 +564,151 @@ class RequisitionViewSet(viewsets.ModelViewSet):
             requisition.status = Requisition.StatusChoices.REJECTED
             requisition.save()
         return Response({'status': 'Requisition Rejected'}, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        permission_classes=[IsAuthenticated, IsTechnicalOfficer],
+        parser_classes=[MultiPartParser, FormParser, JSONParser]
+    )
+    def evaluate(self, request, pk=None):
+        requisition = self.get_object()
+        user = request.user
+        r_name = user.role.name.lower() if user.role else ''
+        is_admin_or_super = user.is_superuser or user.is_staff or 'admin' in r_name
+
+        # 1. Enforce assigned Technical Officer constraint (Security & Permissions)
+        if not is_admin_or_super and requisition.assigned_technical_officer != user:
+            return Response(
+                {'detail': 'You can only evaluate purchase requests assigned directly to you.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # 2. Enforce purchase request is in PENDING_TECHNICAL_EVALUATION state
+        if requisition.status != Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION:
+            return Response(
+                {
+                    'detail': f'This purchase request cannot be evaluated because its status is {requisition.get_status_display()} ({requisition.status}). Only requests pending technical evaluation can be evaluated.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 3. Validate Technical Compliance: Compliant / Partially Compliant / Not Compliant
+        compliance_raw = str(request.data.get('compliance', '')).strip()
+        compliance_map = {
+            'compliant': TechnicalEvaluation.ComplianceChoices.COMPLIANT,
+            'partially compliant': TechnicalEvaluation.ComplianceChoices.PARTIALLY_COMPLIANT,
+            'not compliant': TechnicalEvaluation.ComplianceChoices.NOT_COMPLIANT,
+        }
+        compliance = compliance_map.get(compliance_raw.lower())
+        if not compliance:
+            return Response(
+                {
+                    'compliance': "Technical Compliance is required. Must be one of: 'Compliant', 'Partially Compliant', 'Not Compliant'."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 4. Validate Technical Assessment / Remarks (Required text field)
+        remarks = str(request.data.get('remarks', '')).strip()
+        if not remarks:
+            return Response(
+                {'remarks': 'Technical Assessment / Remarks is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 5. Validate Recommendation: Technically Suitable / Technically Not Suitable / Requires Clarification
+        rec_raw = str(request.data.get('recommendation', '')).strip()
+        rec_map = {
+            'technically suitable': TechnicalEvaluation.RecommendationChoices.SUITABLE,
+            'technically not suitable': TechnicalEvaluation.RecommendationChoices.NOT_SUITABLE,
+            'requires clarification': TechnicalEvaluation.RecommendationChoices.REQUIRES_CLARIFICATION,
+        }
+        recommendation = rec_map.get(rec_raw.lower())
+        if not recommendation:
+            return Response(
+                {
+                    'recommendation': "Recommendation is required. Must be one of: 'Technically Suitable', 'Technically Not Suitable', 'Requires Clarification'."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 6. Optional Supporting Technical Documents
+        supporting_doc = request.FILES.get('supporting_document') or request.FILES.get('technical_document')
+
+        with transaction.atomic():
+            eval_instance = TechnicalEvaluation.objects.create(
+                requisition=requisition,
+                evaluated_by=user,
+                compliance=compliance,
+                remarks=remarks,
+                recommendation=recommendation,
+                supporting_document=supporting_doc
+            )
+
+            # Update requisition technical evaluation fields while preserving original fields
+            requisition.technical_compliance = compliance
+            requisition.technical_evaluation_remarks = remarks
+            requisition.technical_recommendation = recommendation
+            requisition.technical_evaluated_at = timezone.now()
+            if supporting_doc:
+                requisition.technical_document = supporting_doc
+
+            # Workflow state transition
+            if recommendation == TechnicalEvaluation.RecommendationChoices.SUITABLE:
+                # If Technically Suitable -> Move to Procurement Committee review stage
+                requisition.status = Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW
+                approval_status = Approval.StatusChoices.APPROVED
+                audit_action = 'Technical Evaluation Completed - Technically Suitable'
+                stage_desc = 'Requisition moved to Procurement Committee Review.'
+            elif recommendation == TechnicalEvaluation.RecommendationChoices.NOT_SUITABLE:
+                # If Technically Not Suitable -> Rejected
+                requisition.status = Requisition.StatusChoices.REJECTED
+                approval_status = Approval.StatusChoices.REJECTED
+                audit_action = 'Technical Evaluation Completed - Technically Not Suitable'
+                stage_desc = 'Requisition rejected based on technical evaluation.'
+            else:
+                # If Requires Clarification -> Returned for clarification
+                requisition.status = Requisition.StatusChoices.RETURNED
+                requisition.review_comments = remarks
+                approval_status = None
+                audit_action = 'Technical Evaluation Completed - Clarification Required'
+                stage_desc = 'Requisition returned for clarification based on technical evaluation.'
+
+            requisition.save(update_fields=[
+                'technical_compliance', 'technical_evaluation_remarks',
+                'technical_recommendation', 'technical_evaluated_at',
+                'technical_document', 'status', 'review_comments', 'updated_at'
+            ])
+
+            # Audit and approval logging
+            if approval_status:
+                Approval.objects.create(
+                    requisition=requisition,
+                    approved_by=user,
+                    stage='Technical Evaluation',
+                    status=approval_status,
+                    comments=f"Compliance: {compliance} | Recommendation: {recommendation}. Remarks: {remarks}"
+                )
+
+            officer_name = user.get_full_name() or user.username
+            AuditLog.objects.create(
+                user=user,
+                action=audit_action,
+                module='Purchase Requisition',
+                description=(
+                    f"Technical Officer @{user.username} ({officer_name}) evaluated requisition "
+                    f"{requisition.req_number} ('{requisition.title}'). Compliance: {compliance}. "
+                    f"Recommendation: {recommendation}. {stage_desc} Remarks: {remarks}"
+                )
+            )
+
+        serializer = self.get_serializer(requisition)
+        return Response({
+            'status': f"Technical evaluation submitted successfully. {stage_desc}",
+            'requisition': serializer.data,
+            'evaluation': TechnicalEvaluationSerializer(eval_instance, context={'request': request}).data
+        }, status=status.HTTP_200_OK)
 
 
 class QuotationRequestViewSet(viewsets.ModelViewSet):
@@ -608,6 +824,7 @@ class DepartmentStaffDashboardView(APIView):
                 'requested_by_employee_id': req.requested_by.employee_id if req.requested_by else '',
                 'assigned_purchase_officer': req.assigned_purchase_officer_id,
                 'assigned_purchase_officer_name': po_name,
+                'assigned_purchase_officer_employee_id': req.assigned_purchase_officer.employee_id if (req.assigned_purchase_officer and req.assigned_purchase_officer.employee_id) else None,
                 'assignment_status': 'Assigned' if req.assigned_purchase_officer else 'Pending Assignment',
                 'assigned_at': req.assigned_at.isoformat() if req.assigned_at else None,
             })
@@ -1170,7 +1387,7 @@ class TechnicalOfficerDashboardView(APIView):
     """
     Technical Officer Dashboard API Endpoint.
     Returns authenticated Technical Officer profile info, assigned specializations,
-    6 technical evaluation statistics, workflow pipeline, assigned technical evaluations,
+    evaluation statistics, workflow pipeline, assigned purchase requests for technical evaluation,
     pending technical reviews, recent recommendations, and notifications.
     """
     permission_classes = [IsAuthenticated, IsTechnicalOfficer]
@@ -1197,161 +1414,140 @@ class TechnicalOfficerDashboardView(APIView):
             'technical_specializations': specializations,
         }
 
-        # 1. Technical Evaluation Statistics (6 cards) - Only for technical procurements
-        assigned_evaluations_count = Quotation.objects.filter(
-            status='UNDER_REVIEW',
-            quotation_request__requisition__requires_technical_evaluation=True
-        ).count()
-        if assigned_evaluations_count == 0:
-            assigned_evaluations_count = Requisition.objects.filter(
-                status='UNDER_REVIEW',
-                requires_technical_evaluation=True
-            ).count()
+        # 1. Technical Evaluation Statistics for this specific Technical Officer
+        # Only purchase requests that have been reviewed/proceeded by a Purchase Officer
+        # and assigned to THIS Technical Officer (Requirement 2 & 3)
+        assigned_qs = Requisition.objects.filter(
+            status=Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION,
+            assigned_technical_officer=user
+        ).select_related(
+            'department', 'requested_by', 'assigned_purchase_officer', 'assigned_technical_officer'
+        ).prefetch_related('items', 'approvals')
 
-        pending_reviews_count = Quotation.objects.filter(
-            status='SUBMITTED',
-            quotation_request__requisition__requires_technical_evaluation=True
-        ).count()
-        if pending_reviews_count == 0:
-            pending_reviews_count = Requisition.objects.filter(
-                status__in=[
-                    Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION,
-                    Requisition.StatusChoices.PENDING_APPROVAL
-                ],
-                requires_technical_evaluation=True
-            ).count()
+        assigned_evaluations_count = assigned_qs.count()
+        pending_reviews_count = assigned_evaluations_count
+        in_progress_evaluations_count = 0
 
-        in_progress_evaluations_count = assigned_evaluations_count
-        compliance_approved_count = Quotation.objects.filter(
-            status='APPROVED',
-            quotation_request__requisition__requires_technical_evaluation=True
+        user_evals = TechnicalEvaluation.objects.filter(evaluated_by=user)
+        completed_evaluations_count = user_evals.count()
+        compliance_approved_count = user_evals.filter(
+            recommendation=TechnicalEvaluation.RecommendationChoices.SUITABLE
         ).count()
-        compliance_rejected_count = Quotation.objects.filter(
-            status='REJECTED',
-            quotation_request__requisition__requires_technical_evaluation=True
+        compliance_rejected_count = user_evals.filter(
+            recommendation=TechnicalEvaluation.RecommendationChoices.NOT_SUITABLE
         ).count()
-        completed_evaluations_count = compliance_approved_count + compliance_rejected_count
 
         # 2. Workflow Pipeline Stages
         pipeline = {
-            'purchase_requisition': Requisition.objects.filter(status__in=['DRAFT', 'PENDING_APPROVAL']).count(),
+            'purchase_requisition': Requisition.objects.filter(status__in=[Requisition.StatusChoices.SUBMITTED, Requisition.StatusChoices.PENDING_APPROVAL]).count(),
             'quotation_collection': QuotationRequest.objects.filter(status='OPEN').count(),
-            'technical_evaluation': assigned_evaluations_count,
-            'procurement_committee': Approval.objects.filter(stage__icontains='Committee', status='PENDING').count(),
+            'technical_evaluation': Requisition.objects.filter(status=Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION).count(),
+            'procurement_committee': Requisition.objects.filter(status=Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW).count(),
             'purchase_order': PurchaseOrder.objects.filter(status='ISSUED').count(),
         }
 
-        # 3. Assigned Technical Evaluations (Primary Dashboard Table - latest 10)
-        # Pull from quotations in review or open requisitions that require technical expertise
-        quotes_qs = Quotation.objects.filter(
-            status__in=['UNDER_REVIEW', 'SUBMITTED'],
-            quotation_request__requisition__requires_technical_evaluation=True
-        ).select_related(
-            'quotation_request', 'vendor', 'quotation_request__requisition', 'quotation_request__requisition__department'
-        ).order_by('-created_at')
-
-        # If officer has specific specializations, prioritize evaluations matching those specializations
-        if specializations:
-            filtered_quotes = quotes_qs.filter(
-                quotation_request__requisition__technical_specialization__in=specializations
-            )
-            if filtered_quotes.exists():
-                quotes_qs = filtered_quotes
-
-        quotes_qs = quotes_qs[:10]
-
+        # 3. Assigned Technical Evaluations queue (Requirements 2 & 3)
+        # Each Technical Officer sees ONLY purchase requests assigned to them
         assigned_evaluations = []
-        for q in quotes_qs:
-            req = q.quotation_request.requisition if q.quotation_request else None
-            spec_category = req.technical_specialization if req and req.technical_specialization else (
-                specializations[0] if specializations else 'Biomedical Equipment'
-            )
+        for r in assigned_qs.order_by('-technical_assigned_at', '-created_at'):
+            items_data = [
+                {
+                    'id': it.id,
+                    'item_name': it.item_name,
+                    'category': it.category or r.category or 'N/A',
+                    'quantity': it.quantity,
+                    'specifications': it.specifications or '',
+                    'estimated_unit_price': str(it.estimated_unit_price),
+                    'total_price': str(it.total_price),
+                    'required_date': it.required_date.isoformat() if it.required_date else None,
+                }
+                for it in r.items.all()
+            ]
+
+            first_req_date = None
+            for it in r.items.all():
+                if it.required_date:
+                    first_req_date = it.required_date.isoformat()
+                    break
+
+            primary_item_name = r.items.first().item_name if r.items.exists() else r.title
+            total_qty = sum(it.quantity for it in r.items.all()) if r.items.exists() else 1
+            calculated_amount = str(r.estimated_budget) if r.estimated_budget is not None else str(sum(it.total_price for it in r.items.all()))
+
+            doc_url = None
+            if r.supporting_document:
+                doc_url = request.build_absolute_uri(f"/api/procurement/requisitions/{r.id}/document/")
+
+            spec_category = r.technical_specialization or (specializations[0] if specializations else 'Biomedical Equipment')
+
             assigned_evaluations.append({
-                'id': q.id,
-                'evaluation_ref': f"TE-{q.quotation_number}",
-                'procurement_ref': q.quotation_request.rfq_number if q.quotation_request else (req.req_number if req else 'N/A'),
-                'department_name': req.department.name if req and req.department else 'General Medical',
-                'category': req.title if req else (q.quotation_request.title if q.quotation_request else 'Medical Equipment'),
-                'assigned_date': q.created_at.isoformat(),
+                'id': r.id,
+                'evaluation_ref': f"TE-{r.req_number}",
+                'procurement_ref': r.req_number,
+                'req_number': r.req_number,
+                'title': r.title,
+                'department_id': r.department.id if r.department else None,
+                'department_name': r.department.name if r.department else 'N/A',
+                'category': r.category or 'N/A',
+                'primary_item': primary_item_name,
+                'total_quantity': total_qty,
+                'estimated_price': calculated_amount,
+                'total_amount': calculated_amount,
+                'required_date': first_req_date,
+                'assigned_date': r.technical_assigned_at.isoformat() if r.technical_assigned_at else r.created_at.isoformat(),
                 'specialization_category': spec_category,
-                'status': 'In Progress' if q.status == 'UNDER_REVIEW' else 'Pending Review',
-                'vendor_name': q.vendor.company_name if q.vendor else 'N/A',
-                'total_amount': str(q.total_amount),
-                'lead_time_days': q.lead_time_days,
-                'justification': req.justification if req else None,
+                'status': 'Pending Review',
+                'raw_status': r.status,
+                'status_display': r.get_status_display(),
+                'priority': r.priority,
+                'justification': r.justification or '',
+                'supporting_document_url': doc_url,
+                'items': items_data,
+                'assigned_purchase_officer_name': r.assigned_purchase_officer.get_full_name() if r.assigned_purchase_officer else None,
+                'assigned_purchase_officer_employee_id': r.assigned_purchase_officer.employee_id if r.assigned_purchase_officer else None,
             })
 
-        # If no explicit quotation in review yet, check Requisitions in review that require technical expertise
-        if not assigned_evaluations:
-            reqs_qs = Requisition.objects.filter(
-                status__in=[
-                    'UNDER_REVIEW',
-                    Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION,
-                    Requisition.StatusChoices.PENDING_APPROVAL
-                ],
-                requires_technical_evaluation=True
-            ).select_related('department', 'requested_by').order_by('-created_at')
-
-            if specializations:
-                filtered_reqs = reqs_qs.filter(technical_specialization__in=specializations)
-                if filtered_reqs.exists():
-                    reqs_qs = filtered_reqs
-
-            reqs_qs = reqs_qs[:10]
-            for r in reqs_qs:
-                spec_category = r.technical_specialization or (specializations[0] if specializations else 'Biomedical Equipment')
-                assigned_evaluations.append({
-                    'id': r.id,
-                    'evaluation_ref': f"TE-{r.req_number}",
-                    'procurement_ref': r.req_number,
-                    'department_name': r.department.name if r.department else 'N/A',
-                    'category': r.title,
-                    'assigned_date': r.created_at.isoformat(),
-                    'specialization_category': spec_category,
-                    'status': 'In Progress' if r.status == 'UNDER_REVIEW' else 'Pending Review',
-                    'vendor_name': 'Vendor Bidding Stage',
-                    'total_amount': str(r.estimated_budget) if r.estimated_budget is not None else None,
-                    'lead_time_days': None,
-                    'justification': r.justification,
-                })
-
-        # 4. Pending Technical Reviews Widget (latest 8)
+        # 4. Pending Technical Reviews widget
         pending_reviews = []
         for item in assigned_evaluations[:8]:
             pending_reviews.append({
                 'id': item['id'],
                 'ref_number': item['evaluation_ref'],
-                'procurement_requirement': item['category'],
+                'procurement_requirement': item['title'],
                 'department_name': item['department_name'],
-                'evaluation_due_date': item['assigned_date'],
-                'priority': 'HIGH',
+                'evaluation_due_date': item['required_date'] or item['assigned_date'],
+                'priority': item['priority'],
                 'status': item['status'],
-                'estimated_budget': item['total_amount'],
+                'estimated_budget': item['estimated_price'],
             })
 
-        # 5. Recent Technical Recommendations (latest 8)
+        # 5. Recent Technical Recommendations widget
         recent_recommendations = []
-        evaluated_quotes = Quotation.objects.filter(
-            status__in=['APPROVED', 'REJECTED']
-        ).select_related('quotation_request', 'vendor').order_by('-updated_at')[:8]
+        for te in user_evals.select_related('requisition', 'requisition__department').order_by('-created_at')[:8]:
+            doc_url = None
+            if te.supporting_document:
+                doc_url = request.build_absolute_uri(te.supporting_document.url)
 
-        for eq in evaluated_quotes:
-            recommendation = 'Technically Compliant' if eq.status == 'APPROVED' else 'Technically Non-Compliant'
             recent_recommendations.append({
-                'id': eq.id,
-                'evaluation_ref': f"TE-{eq.quotation_number}",
-                'vendor_name': eq.vendor.company_name if eq.vendor else 'N/A',
-                'evaluation_date': eq.updated_at.isoformat(),
-                'recommendation': recommendation,
+                'id': te.id,
+                'requisition_id': te.requisition.id,
+                'evaluation_ref': f"TE-{te.requisition.req_number}",
+                'procurement_ref': te.requisition.req_number,
+                'vendor_name': te.requisition.title,
+                'department_name': te.requisition.department.name if te.requisition.department else 'N/A',
+                'category': te.requisition.category,
+                'evaluation_date': te.created_at.isoformat(),
+                'compliance': te.compliance,
+                'recommendation': te.recommendation,
                 'status': 'Completed',
-                'remarks': eq.remarks or 'Technical specifications verified against clinical compliance criteria.',
+                'remarks': te.remarks,
+                'supporting_document_url': doc_url,
             })
 
-        # 6. Recent Notifications (latest 8)
+        # 6. Notifications
         notifications = []
         logs = AuditLog.objects.filter(
-            Q(module__in=['technical', 'quotation', 'rfq', 'requisition', 'evaluation']) |
-            Q(user=user)
+            Q(user=user) | Q(module='Purchase Requisition', action__icontains='Technical')
         ).order_by('-created_at')[:8]
 
         for log in logs:
@@ -1380,6 +1576,3 @@ class TechnicalOfficerDashboardView(APIView):
             'recent_recommendations': recent_recommendations,
             'notifications': notifications,
         }, status=status.HTTP_200_OK)
-
-
-

@@ -25,11 +25,11 @@ import {
 
 export const TECHNICAL_SPECIALIZATIONS = [
   'Biomedical Equipment',
-  'Medical & Surgical Equipment',
+  'Medical, Surgical & Critical Care Equipment',
   'Laboratory & Diagnostic Equipment',
   'Radiology & Medical Imaging',
-  'Critical Care & Life-Support Equipment',
-  'IT & Healthcare Technology'
+  'IT & Healthcare Technology',
+  'Facilities & General Engineering'
 ];
 
 const TechnicalOfficerManagementPage = () => {

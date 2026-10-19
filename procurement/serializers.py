@@ -3,13 +3,51 @@ import json
 from decimal import Decimal
 from rest_framework import serializers
 from .models import (
-    Requisition, RequisitionItem, Approval, QuotationRequest, Quotation, QuotationItem, PurchaseOrder, PurchaseOrderItem
+    Requisition, RequisitionItem, Approval, QuotationRequest, Quotation, QuotationItem, PurchaseOrder, PurchaseOrderItem,
+    TechnicalEvaluation
 )
 from accounts.models import Department
 from accounts.serializers import UserSerializer, DepartmentSerializer
 from vendors.models import Vendor
 from vendors.serializers import VendorSerializer
 from .constants import DEPARTMENT_CATEGORY_MAP, get_allowed_categories_for_department
+
+
+class TechnicalEvaluationSerializer(serializers.ModelSerializer):
+    evaluated_by_details = UserSerializer(source='evaluated_by', read_only=True)
+    evaluated_by_name = serializers.SerializerMethodField()
+    evaluated_by_employee_id = serializers.SerializerMethodField()
+    supporting_document_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TechnicalEvaluation
+        fields = [
+            'id', 'requisition', 'evaluated_by', 'evaluated_by_details',
+            'evaluated_by_name', 'evaluated_by_employee_id',
+            'compliance', 'remarks', 'recommendation',
+            'supporting_document', 'supporting_document_url',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'evaluated_by', 'created_at', 'updated_at']
+
+    def get_evaluated_by_name(self, obj):
+        if obj.evaluated_by:
+            name = obj.evaluated_by.get_full_name()
+            return name.strip() if name and name.strip() else obj.evaluated_by.username
+        return None
+
+    def get_evaluated_by_employee_id(self, obj):
+        if obj.evaluated_by and obj.evaluated_by.employee_id:
+            return obj.evaluated_by.employee_id
+        return None
+
+    def get_supporting_document_url(self, obj):
+        if obj.supporting_document:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.supporting_document.url)
+            return obj.supporting_document.url
+        return None
 
 
 class ApprovalSerializer(serializers.ModelSerializer):
@@ -71,7 +109,14 @@ class RequisitionSerializer(serializers.ModelSerializer):
     reviewed_by_details = UserSerializer(source='reviewed_by', read_only=True)
     assigned_purchase_officer_details = UserSerializer(source='assigned_purchase_officer', read_only=True)
     assigned_purchase_officer_name = serializers.SerializerMethodField()
+    assigned_purchase_officer_employee_id = serializers.SerializerMethodField()
     assignment_status = serializers.SerializerMethodField()
+    assigned_technical_officer_details = UserSerializer(source='assigned_technical_officer', read_only=True)
+    assigned_technical_officer_name = serializers.SerializerMethodField()
+    assigned_technical_officer_employee_id = serializers.SerializerMethodField()
+    technical_assignment_status = serializers.SerializerMethodField()
+    technical_evaluations = TechnicalEvaluationSerializer(many=True, read_only=True)
+    technical_document_url = serializers.SerializerMethodField()
     approvals = ApprovalSerializer(many=True, read_only=True)
     items = RequisitionItemSerializer(many=True, required=False)
     supporting_document = serializers.FileField(required=False, allow_null=True)
@@ -86,7 +131,14 @@ class RequisitionSerializer(serializers.ModelSerializer):
             'technical_specialization', 'department', 'department_details',
             'requested_by', 'requested_by_details', 'assigned_purchase_officer',
             'assigned_purchase_officer_details', 'assigned_purchase_officer_name',
+            'assigned_purchase_officer_employee_id',
             'assignment_status', 'assigned_at',
+            'assigned_technical_officer', 'assigned_technical_officer_details',
+            'assigned_technical_officer_name', 'assigned_technical_officer_employee_id',
+            'technical_assignment_status', 'technical_assigned_at',
+            'technical_compliance', 'technical_evaluation_remarks',
+            'technical_recommendation', 'technical_evaluated_at',
+            'technical_document', 'technical_document_url', 'technical_evaluations',
             'priority', 'estimated_budget',
             'status', 'justification', 'supporting_document', 'secure_document_url',
             'technical_evaluation_advisory',
@@ -96,7 +148,14 @@ class RequisitionSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'req_number', 'requested_by', 'assigned_purchase_officer',
             'assigned_purchase_officer_details', 'assigned_purchase_officer_name',
+            'assigned_purchase_officer_employee_id',
             'assignment_status', 'assigned_at',
+            'assigned_technical_officer', 'assigned_technical_officer_details',
+            'assigned_technical_officer_name', 'assigned_technical_officer_employee_id',
+            'technical_assignment_status', 'technical_assigned_at',
+            'technical_compliance', 'technical_evaluation_remarks',
+            'technical_recommendation', 'technical_evaluated_at',
+            'technical_document', 'technical_document_url', 'technical_evaluations',
             'requires_technical_evaluation',
             'technical_specialization', 'review_comments', 'reviewed_by', 'reviewed_at',
             'submitted_at', 'required_date', 'secure_document_url', 'technical_evaluation_advisory',
@@ -109,10 +168,33 @@ class RequisitionSerializer(serializers.ModelSerializer):
             return full_name.strip() if full_name and full_name.strip() else obj.assigned_purchase_officer.username
         return None
 
+    def get_assigned_purchase_officer_employee_id(self, obj):
+        if obj.assigned_purchase_officer and obj.assigned_purchase_officer.employee_id:
+            return obj.assigned_purchase_officer.employee_id
+        return None
+
     def get_assignment_status(self, obj):
         if obj.assigned_purchase_officer:
             return "Assigned"
         return "Pending Assignment"
+
+    def get_assigned_technical_officer_name(self, obj):
+        if obj.assigned_technical_officer:
+            full_name = obj.assigned_technical_officer.get_full_name()
+            return full_name.strip() if full_name and full_name.strip() else obj.assigned_technical_officer.username
+        return None
+
+    def get_assigned_technical_officer_employee_id(self, obj):
+        if obj.assigned_technical_officer and obj.assigned_technical_officer.employee_id:
+            return obj.assigned_technical_officer.employee_id
+        return None
+
+    def get_technical_assignment_status(self, obj):
+        if obj.assigned_technical_officer:
+            return "Assigned"
+        elif obj.requires_technical_evaluation:
+            return "Pending Assignment"
+        return "Not Applicable"
 
     def get_technical_evaluation_advisory(self, obj):
         return obj.get_technical_evaluation_advisory()
@@ -128,6 +210,14 @@ class RequisitionSerializer(serializers.ModelSerializer):
             if request:
                 return request.build_absolute_uri(rel_url)
             return rel_url
+        return None
+
+    def get_technical_document_url(self, obj):
+        if obj.technical_document:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.technical_document.url)
+            return obj.technical_document.url
         return None
 
     def validate_supporting_document(self, value):
@@ -275,6 +365,8 @@ class RequisitionSerializer(serializers.ModelSerializer):
         # It is decided explicitly by the Purchase Officer during review.
         requisition.requires_technical_evaluation = False
         requisition.technical_specialization = None
+        requisition.assigned_technical_officer = None
+        requisition.technical_assigned_at = None
         requisition.save()
 
         return requisition
@@ -302,6 +394,8 @@ class RequisitionSerializer(serializers.ModelSerializer):
             if instance.status in [Requisition.StatusChoices.DRAFT, Requisition.StatusChoices.RETURNED, Requisition.StatusChoices.SUBMITTED]:
                 instance.requires_technical_evaluation = False
                 instance.technical_specialization = None
+                instance.assigned_technical_officer = None
+                instance.technical_assigned_at = None
 
         instance.save()
         return instance

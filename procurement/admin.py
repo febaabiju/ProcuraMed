@@ -1,7 +1,8 @@
 from django.contrib import admin
 from .models import (
     Requisition, Approval, QuotationRequest, 
-    Quotation, QuotationItem, PurchaseOrder, PurchaseOrderItem
+    Quotation, QuotationItem, PurchaseOrder, PurchaseOrderItem,
+    TechnicalEvaluation
 )
 
 
@@ -61,4 +62,12 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
     list_filter = ('status', 'order_date')
     search_fields = ('po_number', 'vendor__company_name')
     inlines = [PurchaseOrderItemInline]
+    ordering = ('-created_at',)
+
+
+@admin.register(TechnicalEvaluation)
+class TechnicalEvaluationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'requisition', 'evaluated_by', 'compliance', 'recommendation', 'created_at')
+    list_filter = ('compliance', 'recommendation', 'created_at')
+    search_fields = ('requisition__req_number', 'remarks')
     ordering = ('-created_at',)

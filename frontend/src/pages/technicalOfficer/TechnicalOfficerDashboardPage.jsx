@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import axiosClient from '../../api/axiosClient';
 import TechnicalOfficerLayout from '../../components/layout/TechnicalOfficerLayout';
 import Button from '../../components/common/Button';
+import TechnicalEvaluationModal from './TechnicalEvaluationModal';
 import {
   HiClipboardList,
   HiClock,
@@ -481,13 +482,13 @@ const TechnicalOfficerDashboardPage = () => {
                           </td>
                           <td className="px-4 py-3 text-right whitespace-nowrap">
                             <Button
-                              variant="outline"
+                              variant="primary"
                               size="sm"
                               onClick={() => setSelectedEval(ev)}
-                              className="text-[11px] font-bold text-violet-700 border-violet-200 hover:bg-violet-50 py-1 px-2.5"
+                              className="text-[11px] font-bold bg-violet-700 hover:bg-violet-800 text-white py-1 px-3 gap-1 shadow-sm"
                             >
-                              <HiEye className="w-3.5 h-3.5" />
-                              <span>View Evaluation</span>
+                              <HiBeaker className="w-3.5 h-3.5" />
+                              <span>Evaluate</span>
                             </Button>
                           </td>
                         </tr>
@@ -659,92 +660,15 @@ const TechnicalOfficerDashboardPage = () => {
         </div>
       </div>
 
-      {/* MODAL 1: EVALUATION DETAILS MODAL */}
-      <AnimatePresence>
-        {selectedEval && (
-          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-violet-100 space-y-5"
-            >
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-10 h-10 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center font-bold">
-                    <HiBeaker className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-extrabold text-slate-900">{selectedEval.category}</h3>
-                    <p className="text-xs font-mono font-bold text-violet-700">{selectedEval.evaluation_ref}</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setSelectedEval(null)}
-                  className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-                >
-                  <HiX className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="space-y-3 text-xs text-slate-700">
-                <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
-                  <div>
-                    <p className="text-[10px] uppercase font-bold text-slate-400">Department</p>
-                    <p className="font-bold text-slate-800 mt-0.5">{selectedEval.department_name}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase font-bold text-slate-400">Procurement Ref</p>
-                    <p className="font-bold font-mono text-slate-800 mt-0.5">{selectedEval.procurement_ref}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase font-bold text-slate-400">Specialization</p>
-                    <span className="inline-block mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-50 text-violet-700 border border-violet-100">
-                      {selectedEval.specialization_category}
-                    </span>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase font-bold text-slate-400">Status</p>
-                    <span className={`inline-block mt-0.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getStatusBadge(selectedEval.status)}`}>
-                      {selectedEval.status}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
-                  <p className="text-[10px] uppercase font-bold text-slate-400">Vendor / Sourcing Scope</p>
-                  <p className="font-extrabold text-slate-900 text-sm">{selectedEval.vendor_name}</p>
-                  {selectedEval.total_amount && (
-                    <p className="text-[11px] text-slate-500 font-medium">
-                      Estimated Valuation: <strong>{formatCurrency(selectedEval.total_amount)}</strong>
-                    </p>
-                  )}
-                </div>
-
-                {selectedEval.justification && (
-                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
-                    <p className="text-[10px] uppercase font-bold text-slate-400">Technical Specifications &amp; Requirements</p>
-                    <p className="text-slate-700 leading-relaxed font-medium">
-                      {selectedEval.justification}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
-                <Button
-                  variant="outline"
-                  size="md"
-                  onClick={() => setSelectedEval(null)}
-                  className="border-slate-200 text-slate-700"
-                >
-                  Close
-                </Button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      {/* MODAL 1: TECHNICAL EVALUATION MODAL */}
+      <TechnicalEvaluationModal
+        requisition={selectedEval}
+        isOpen={!!selectedEval}
+        onClose={() => setSelectedEval(null)}
+        onEvaluationSubmitted={() => {
+          fetchTechnicalDashboardData();
+        }}
+      />
 
       {/* MODAL 2: OFFICER PROFILE MODAL */}
       <AnimatePresence>

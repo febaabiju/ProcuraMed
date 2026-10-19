@@ -35,6 +35,7 @@ import PurchaseOfficerPlaceholderPage from './pages/purchaseOfficer/PurchaseOffi
 import ProcurementCommitteeDashboardPage from './pages/committee/ProcurementCommitteeDashboardPage';
 import CommitteePlaceholderPage from './pages/committee/CommitteePlaceholderPage';
 import TechnicalOfficerDashboardPage from './pages/technicalOfficer/TechnicalOfficerDashboardPage';
+import TechnicalOfficerEvaluationsPage from './pages/technicalOfficer/TechnicalOfficerEvaluationsPage';
 import TechnicalOfficerPlaceholderPage from './pages/technicalOfficer/TechnicalOfficerPlaceholderPage';
 import SetNewPasswordPage from './pages/SetNewPasswordPage';
 
@@ -67,7 +68,7 @@ function App() {
             path="/technical-officer/evaluations"
             element={
               <TechnicalOfficerProtectedRoute>
-                <TechnicalOfficerPlaceholderPage path="/technical-officer/evaluations" />
+                <TechnicalOfficerEvaluationsPage />
               </TechnicalOfficerProtectedRoute>
             }
           />
@@ -75,7 +76,7 @@ function App() {
             path="/technical-officer/assigned-reviews"
             element={
               <TechnicalOfficerProtectedRoute>
-                <TechnicalOfficerPlaceholderPage path="/technical-officer/assigned-reviews" />
+                <TechnicalOfficerEvaluationsPage />
               </TechnicalOfficerProtectedRoute>
             }
           />
