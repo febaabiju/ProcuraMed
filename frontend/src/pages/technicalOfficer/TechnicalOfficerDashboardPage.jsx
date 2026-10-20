@@ -265,7 +265,7 @@ const TechnicalOfficerDashboardPage = () => {
               bgLight: 'bg-amber-50',
               textColor: 'text-amber-700',
               borderColor: 'border-amber-100',
-              link: '/technical-officer/assigned-reviews'
+              link: '/technical-officer/evaluations'
             },
             {
               title: 'In Progress',
@@ -285,7 +285,7 @@ const TechnicalOfficerDashboardPage = () => {
               bgLight: 'bg-emerald-50',
               textColor: 'text-emerald-700',
               borderColor: 'border-emerald-100',
-              link: '/technical-officer/history'
+              link: '/technical-officer/evaluations?tab=completed'
             },
             {
               title: 'Compliance Approved',
@@ -295,7 +295,7 @@ const TechnicalOfficerDashboardPage = () => {
               bgLight: 'bg-teal-50',
               textColor: 'text-teal-700',
               borderColor: 'border-teal-100',
-              link: '/technical-officer/history'
+              link: '/technical-officer/evaluations?tab=completed'
             },
             {
               title: 'Compliance Rejected',
@@ -305,7 +305,7 @@ const TechnicalOfficerDashboardPage = () => {
               bgLight: 'bg-rose-50',
               textColor: 'text-rose-700',
               borderColor: 'border-rose-100',
-              link: '/technical-officer/history'
+              link: '/technical-officer/evaluations?tab=completed'
             }
           ].map((card, idx) => {
             const Icon = card.icon;
@@ -586,7 +586,7 @@ const TechnicalOfficerDashboardPage = () => {
                     <p className="text-[10px] text-slate-400">Completed assessments</p>
                   </div>
                 </div>
-                <Link to="/technical-officer/history" className="text-[11px] font-bold text-violet-600 hover:text-violet-800">
+                <Link to="/technical-officer/evaluations?tab=completed" className="text-[11px] font-bold text-violet-600 hover:text-violet-800">
                   All →
                 </Link>
               </div>

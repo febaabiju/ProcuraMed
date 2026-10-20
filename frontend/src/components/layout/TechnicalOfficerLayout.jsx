@@ -7,8 +7,6 @@ import Button from '../common/Button';
 import {
   HiHome,
   HiBeaker,
-  HiClipboardCheck,
-  HiArchive,
   HiBell,
   HiUserCircle,
   HiLogout,
@@ -48,8 +46,6 @@ const TechnicalOfficerLayout = ({
   const navItems = [
     { name: 'Dashboard', path: '/technical-officer/dashboard', icon: HiHome },
     { name: 'Technical Evaluations', path: '/technical-officer/evaluations', icon: HiBeaker },
-    { name: 'Assigned Reviews', path: '/technical-officer/assigned-reviews', icon: HiClipboardCheck },
-    { name: 'Evaluation History', path: '/technical-officer/history', icon: HiArchive },
     { name: 'Notifications', path: '/technical-officer/notifications', icon: HiBell },
     { name: 'My Profile', path: '/technical-officer/profile', icon: HiUserCircle },
   ];

@@ -7,71 +7,36 @@ import {
   HiBeaker,
   HiCheckCircle,
   HiXCircle,
-  HiQuestionMarkCircle,
   HiShieldCheck,
-  HiUpload,
   HiDocumentText,
   HiDownload,
   HiInformationCircle,
-  HiTag,
   HiUser,
-  HiCalendar,
-  HiCurrencyDollar,
-  HiOfficeBuilding,
   HiRefresh
 } from 'react-icons/hi';
 
-const COMPLIANCE_CHOICES = [
-  {
-    value: 'Compliant',
-    label: 'Compliant',
-    description: 'Fully satisfies technical and hospital safety requirements',
-    badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200 peer-checked:border-emerald-600 peer-checked:bg-emerald-100/70',
-    icon: HiCheckCircle,
-    color: 'emerald'
-  },
-  {
-    value: 'Partially Compliant',
-    label: 'Partially Compliant',
-    description: 'Minor specification deviations or missing non-critical features',
-    badgeClass: 'bg-amber-50 text-amber-700 border-amber-200 peer-checked:border-amber-600 peer-checked:bg-amber-100/70',
-    icon: HiInformationCircle,
-    color: 'amber'
-  },
-  {
-    value: 'Not Compliant',
-    label: 'Not Compliant',
-    description: 'Fails mandatory clinical, technical, or electrical safety specs',
-    badgeClass: 'bg-rose-50 text-rose-700 border-rose-200 peer-checked:border-rose-600 peer-checked:bg-rose-100/70',
-    icon: HiXCircle,
-    color: 'rose'
-  }
-];
-
-const RECOMMENDATION_CHOICES = [
+const EVALUATION_OUTCOMES = [
   {
     value: 'Technically Suitable',
-    label: 'Technically Suitable',
-    actionDesc: 'Moves request to Procurement Committee review stage',
-    badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200 peer-checked:border-emerald-600 peer-checked:bg-emerald-100/70',
-    tag: 'Procurement Committee',
-    color: 'emerald'
-  },
-  {
-    value: 'Technically Not Suitable',
-    label: 'Technically Not Suitable',
-    actionDesc: 'Rejects request due to technical non-compliance',
-    badgeClass: 'bg-rose-50 text-rose-800 border-rose-200 peer-checked:border-rose-600 peer-checked:bg-rose-100/70',
-    tag: 'Rejection',
-    color: 'rose'
+    label: 'Technically Suitable (Approve)',
+    shortLabel: 'Technically Suitable',
+    actionDesc: 'Confirms equipment meets required technical specifications. On submission, forwards the request to Procurement Committee review.',
+    tag: 'Procurement Committee Review',
+    color: 'emerald',
+    icon: HiCheckCircle,
+    activeBorder: 'border-emerald-600 bg-emerald-50/70 text-emerald-900',
+    tagClass: 'bg-emerald-100 text-emerald-800'
   },
   {
     value: 'Requires Clarification',
-    label: 'Requires Clarification',
-    actionDesc: 'Returns request for specification clarification',
-    badgeClass: 'bg-sky-50 text-sky-800 border-sky-200 peer-checked:border-sky-600 peer-checked:bg-sky-100/70',
-    tag: 'Clarification / Return',
-    color: 'sky'
+    label: 'Return for Clarification',
+    shortLabel: 'Return for Clarification',
+    actionDesc: 'Identifies unclear specifications or missing information. Returns request for clarification and resubmission.',
+    tag: 'Return for Clarification',
+    color: 'amber',
+    icon: HiRefresh,
+    activeBorder: 'border-amber-600 bg-amber-50/70 text-amber-900',
+    tagClass: 'bg-amber-100 text-amber-800'
   }
 ];
 
@@ -81,40 +46,55 @@ const TechnicalEvaluationModal = ({
   onClose,
   onEvaluationSubmitted
 }) => {
-  const [compliance, setCompliance] = useState('');
+  const [outcome, setOutcome] = useState('');
   const [remarks, setRemarks] = useState('');
-  const [recommendation, setRecommendation] = useState('');
-  const [file, setFile] = useState(null);
-  const [fileName, setFileName] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
+  const [docLoading, setDocLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
   useEffect(() => {
     if (isOpen) {
-      setCompliance('');
+      setOutcome('');
       setRemarks('');
-      setRecommendation('');
-      setFile(null);
-      setFileName('');
       setErrorMsg('');
       setSuccessMsg('');
+      setDocLoading(false);
     }
   }, [isOpen, requisition]);
 
   if (!isOpen || !requisition) return null;
 
-  const handleFileChange = (e) => {
-    const selected = e.target.files[0];
-    if (selected) {
-      if (selected.size > 15 * 1024 * 1024) {
-        setErrorMsg('Attached file exceeds 15 MB limit.');
-        return;
+  const handleOpenDocument = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+
+    const actualUrl = requisition.actual_document_url || requisition.supporting_document;
+    const directTarget = actualUrl || requisition.supporting_document_url;
+
+    // If direct actual URL points to media file (e.g. /media/ or http), open it in a new window/tab
+    if (actualUrl && (actualUrl.includes('/media/') || actualUrl.startsWith('blob:') || actualUrl.startsWith('data:'))) {
+      window.open(actualUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    setDocLoading(true);
+    try {
+      const res = await axiosClient.get(`/procurement/requisitions/${requisition.id}/document/`, {
+        responseType: 'blob'
+      });
+      const contentType = res.headers['content-type'] || 'application/pdf';
+      const blob = new Blob([res.data], { type: contentType });
+      const fileURL = URL.createObjectURL(blob);
+      window.open(fileURL, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      if (directTarget) {
+        window.open(directTarget, '_blank', 'noopener,noreferrer');
+      } else {
+        alert(err.response?.data?.detail || 'Failed to open supporting document.');
       }
-      setFile(selected);
-      setFileName(selected.name);
-      setErrorMsg('');
+    } finally {
+      setDocLoading(false);
     }
   };
 
@@ -124,39 +104,30 @@ const TechnicalEvaluationModal = ({
     setSuccessMsg('');
 
     // Strict validation
-    if (!compliance) {
-      setErrorMsg('Please select a Technical Compliance decision (Compliant, Partially Compliant, or Not Compliant).');
+    if (!outcome) {
+      setErrorMsg('Please select an Evaluation Outcome: "Technically Suitable (Approve)" or "Return for Clarification".');
       return;
     }
 
     if (!remarks.trim()) {
-      setErrorMsg('Technical Assessment / Remarks is required. Please explain your technical findings.');
-      return;
-    }
-
-    if (!recommendation) {
-      setErrorMsg('Please select a Recommendation (Technically Suitable, Technically Not Suitable, or Requires Clarification).');
+      if (outcome === 'Requires Clarification') {
+        setErrorMsg('Please provide a clarification reason explaining what technical specifications or information are required.');
+      } else {
+        setErrorMsg('Technical Assessment Remarks are required to submit an evaluation.');
+      }
       return;
     }
 
     setSubmitting(true);
     try {
-      const formData = new FormData();
-      formData.append('compliance', compliance);
-      formData.append('remarks', remarks.trim());
-      formData.append('recommendation', recommendation);
-      if (file) {
-        formData.append('supporting_document', file);
-      }
+      const payload = {
+        recommendation: outcome,
+        remarks: remarks.trim()
+      };
 
       const res = await axiosClient.post(
         `/procurement/requisitions/${requisition.id}/evaluate/`,
-        formData,
-        {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        }
+        payload
       );
 
       setSuccessMsg(res.data.status || 'Technical evaluation successfully recorded.');
@@ -170,7 +141,7 @@ const TechnicalEvaluationModal = ({
     } catch (err) {
       const respData = err.response?.data;
       if (typeof respData === 'object' && respData !== null) {
-        const firstErr = respData.detail || respData.compliance || respData.remarks || respData.recommendation || JSON.stringify(respData);
+        const firstErr = respData.detail || respData.remarks || respData.recommendation || JSON.stringify(respData);
         setErrorMsg(firstErr);
       } else {
         setErrorMsg('Failed to submit technical evaluation. Please check your inputs and try again.');
@@ -196,7 +167,7 @@ const TechnicalEvaluationModal = ({
 
   const itemsList = requisition.items || [];
   const reqNumber = requisition.req_number || requisition.procurement_ref || 'REQ-XXXX';
-  const docUrl = requisition.supporting_document_url || requisition.supporting_document;
+  const docUrl = requisition.actual_document_url || requisition.supporting_document || requisition.supporting_document_url;
 
   return (
     <AnimatePresence>
@@ -319,6 +290,19 @@ const TechnicalEvaluationModal = ({
                 </div>
               )}
 
+              {/* Previous Clarification Request (if resubmitted) */}
+              {(requisition.clarification_reason || requisition.review_comments) && (
+                <div className="bg-amber-50/90 p-3.5 rounded-xl border border-amber-200/90 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-amber-900 font-extrabold text-[11px] uppercase tracking-wider">
+                    <HiRefresh className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                    <span>Clarification Reason Requested by Technical Officer</span>
+                  </div>
+                  <p className="text-amber-950 text-xs leading-relaxed font-medium bg-white/70 p-2.5 rounded-lg border border-amber-200/50">
+                    {requisition.clarification_reason || requisition.review_comments}
+                  </p>
+                </div>
+              )}
+
               {/* Items Table with Specifications */}
               <div className="space-y-2">
                 <span className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider block">
@@ -378,20 +362,20 @@ const TechnicalEvaluationModal = ({
                       <p className="text-[10px] text-slate-400">Attached clinical / procurement documentation</p>
                     </div>
                   </div>
-                  <a
-                    href={docUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-50 text-violet-700 border border-violet-200 hover:bg-violet-100 font-bold text-xs transition-colors"
+                  <button
+                    type="button"
+                    onClick={handleOpenDocument}
+                    disabled={docLoading}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-violet-50 text-violet-700 border border-violet-200 hover:bg-violet-100 hover:border-violet-300 font-bold text-xs transition-colors shadow-xs cursor-pointer disabled:opacity-50"
                   >
-                    <HiDownload className="w-3.5 h-3.5" />
-                    <span>View / Download</span>
-                  </a>
+                    <HiDocumentText className="w-3.5 h-3.5 text-violet-600" />
+                    <span>{docLoading ? 'Opening...' : 'View Document'}</span>
+                  </button>
                 </div>
               )}
             </div>
 
-            {/* SECTION 2: TECHNICAL EVALUATION FORM (REQUIREMENT 4) */}
+            {/* SECTION 2: TECHNICAL EVALUATION FORM */}
             <form onSubmit={handleSubmit} className="space-y-5 pt-2">
               <div className="border-b border-slate-200 pb-2">
                 <h3 className="text-sm font-black text-slate-900 tracking-tight flex items-center gap-2">
@@ -399,48 +383,60 @@ const TechnicalEvaluationModal = ({
                   <span>Technical Officer Evaluation Form</span>
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Complete technical specification compliance check, assessment remarks, and routing recommendation.
+                  Confirm equipment specification compliance or return for clarification. Technical documents are not required.
                 </p>
               </div>
 
-              {/* 1. Technical Compliance Decision */}
+              {/* 1. Evaluation Outcome (Exactly 2 Choices) */}
               <div className="space-y-2">
-                <label className="block font-bold text-slate-800 text-xs">
-                  1. Technical Compliance <span className="text-rose-500">*</span>
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {COMPLIANCE_CHOICES.map((opt) => {
-                    const isSelected = compliance === opt.value;
+                <div className="flex items-center justify-between">
+                  <label className="block font-bold text-slate-800 text-xs">
+                    1. Evaluation Outcome <span className="text-rose-500">*</span>
+                  </label>
+                  <span className="text-[10px] text-slate-400">Select one outcome</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  {EVALUATION_OUTCOMES.map((opt) => {
+                    const isSelected = outcome === opt.value;
                     const Icon = opt.icon;
                     return (
                       <div
                         key={opt.value}
-                        onClick={() => setCompliance(opt.value)}
-                        className={`cursor-pointer p-3.5 rounded-2xl border-2 transition-all flex flex-col justify-between ${
+                        onClick={() => setOutcome(opt.value)}
+                        className={`cursor-pointer p-4 rounded-2xl border-2 transition-all flex flex-col justify-between ${
                           isSelected
-                            ? 'border-violet-600 bg-violet-50/70 shadow-xs'
+                            ? `${opt.activeBorder} shadow-sm`
                             : 'border-slate-200 bg-white hover:border-slate-300'
                         }`}
                       >
-                        <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center justify-between mb-2">
                           <span className="font-extrabold text-slate-900 text-xs">{opt.label}</span>
-                          <Icon className={`w-4 h-4 ${
-                            opt.value === 'Compliant' ? 'text-emerald-600' :
-                            opt.value === 'Partially Compliant' ? 'text-amber-500' : 'text-rose-600'
-                          }`} />
+                          <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider ${opt.tagClass}`}>
+                            {opt.tag}
+                          </span>
                         </div>
-                        <p className="text-[10px] text-slate-500 leading-snug">{opt.description}</p>
+                        <p className="text-[11px] text-slate-500 leading-snug mb-2">{opt.actionDesc}</p>
+                        <div className="flex items-center gap-1.5 text-[11px] font-bold mt-auto pt-2 border-t border-slate-100/80">
+                          <Icon className={`w-4 h-4 ${opt.color === 'emerald' ? 'text-emerald-600' : 'text-amber-500'}`} />
+                          <span className={opt.color === 'emerald' ? 'text-emerald-700' : 'text-amber-700'}>
+                            {isSelected ? 'Selected' : 'Select this outcome'}
+                          </span>
+                        </div>
                       </div>
                     );
                   })}
                 </div>
               </div>
 
-              {/* 2. Technical Assessment / Remarks (Required) */}
+              {/* 2. Technical Assessment Remarks / Clarification Reason (Required) */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label htmlFor="tech-remarks" className="block font-bold text-slate-800 text-xs">
-                    2. Technical Assessment / Remarks <span className="text-rose-500">*</span>
+                    {outcome === 'Requires Clarification'
+                      ? '2. Clarification Reason / Missing Specifications'
+                      : outcome === 'Technically Suitable'
+                      ? '2. Technical Assessment & Approval Remarks'
+                      : '2. Technical Assessment / Remarks'} <span className="text-rose-500">*</span>
                   </label>
                   <span className="text-[10px] text-slate-400">
                     {remarks.length} characters (Mandatory)
@@ -451,82 +447,23 @@ const TechnicalEvaluationModal = ({
                   rows={4}
                   value={remarks}
                   onChange={(e) => setRemarks(e.target.value)}
-                  placeholder="Detail your technical findings, compliance checks against hospital specifications, electrical safety, clinical efficacy, and justification for your recommendation..."
+                  placeholder={
+                    outcome === 'Requires Clarification'
+                      ? 'Detail the specific technical parameters, missing documentation, or unclear specifications that the department must clarify before approval...'
+                      : outcome === 'Technically Suitable'
+                      ? 'Confirm that specifications, safety standards, and clinical requirements are met, and provide basis for forwarding to Procurement Committee...'
+                      : 'Provide your technical evaluation remarks or clarification requirements...'
+                  }
                   className="w-full p-3.5 rounded-2xl border border-slate-300 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent font-medium"
                   required
                 />
-              </div>
-
-              {/* 3. Recommendation */}
-              <div className="space-y-2">
-                <label className="block font-bold text-slate-800 text-xs">
-                  3. Recommendation <span className="text-rose-500">*</span>
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {RECOMMENDATION_CHOICES.map((rec) => {
-                    const isSelected = recommendation === rec.value;
-                    return (
-                      <div
-                        key={rec.value}
-                        onClick={() => setRecommendation(rec.value)}
-                        className={`cursor-pointer p-3.5 rounded-2xl border-2 transition-all flex flex-col justify-between ${
-                          isSelected
-                            ? 'border-violet-600 bg-violet-50/70 shadow-xs'
-                            : 'border-slate-200 bg-white hover:border-slate-300'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span className="font-extrabold text-slate-900 text-xs">{rec.label}</span>
-                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${
-                            rec.color === 'emerald' ? 'bg-emerald-100 text-emerald-800' :
-                            rec.color === 'rose' ? 'bg-rose-100 text-rose-800' : 'bg-sky-100 text-sky-800'
-                          }`}>
-                            {rec.tag}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-500 leading-snug">{rec.actionDesc}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* 4. Supporting Technical Documents (Optional Upload) */}
-              <div className="space-y-2">
-                <label className="block font-bold text-slate-800 text-xs">
-                  4. Supporting Technical Documents <span className="text-slate-400 font-normal">(Optional)</span>
-                </label>
-                <div className="p-4 rounded-2xl border-2 border-dashed border-slate-200 hover:border-violet-300 transition-colors bg-slate-50/60 flex flex-col items-center justify-center gap-2">
-                  <HiUpload className="w-6 h-6 text-slate-400" />
-                  <div className="text-center">
-                    <label htmlFor="eval-doc-upload" className="font-bold text-violet-700 hover:text-violet-900 cursor-pointer text-xs">
-                      {fileName ? 'Replace attached document' : 'Click to upload technical datasheet, inspection matrix, or certificate'}
-                    </label>
-                    <p className="text-[10px] text-slate-400 mt-0.5">
-                      PDF, DOC, DOCX, or images up to 15 MB
-                    </p>
-                  </div>
-                  <input
-                    id="eval-doc-upload"
-                    type="file"
-                    className="hidden"
-                    onChange={handleFileChange}
-                    accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
-                  />
-                  {fileName && (
-                    <div className="flex items-center gap-2 px-3 py-1 bg-white rounded-lg border border-slate-200 text-[11px] font-mono text-slate-700 mt-1">
-                      <HiDocumentText className="w-4 h-4 text-violet-600" />
-                      <span>{fileName}</span>
-                      <button
-                        type="button"
-                        onClick={() => { setFile(null); setFileName(''); }}
-                        className="text-slate-400 hover:text-rose-600 ml-1"
-                      >
-                        <HiX className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <p className="text-[10px] text-slate-400">
+                  {outcome === 'Requires Clarification'
+                    ? 'This clarification reason will be returned directly to the requisition originator for resubmission.'
+                    : outcome === 'Technically Suitable'
+                    ? 'These remarks will accompany the purchase request for Procurement Committee review.'
+                    : 'Mandatory technical assessment notes.'}
+                </p>
               </div>
 
               {/* Footer Actions */}
@@ -546,17 +483,33 @@ const TechnicalEvaluationModal = ({
                   variant="primary"
                   size="md"
                   disabled={submitting}
-                  className="bg-violet-700 hover:bg-violet-800 text-white font-bold text-xs gap-2 shadow-md shadow-violet-700/20"
+                  className={`text-white font-bold text-xs gap-2 shadow-md ${
+                    outcome === 'Requires Clarification'
+                      ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20'
+                      : outcome === 'Technically Suitable'
+                      ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'
+                      : 'bg-violet-700 hover:bg-violet-800 shadow-violet-700/20'
+                  }`}
                 >
                   {submitting ? (
                     <>
                       <HiRefresh className="w-4 h-4 animate-spin" />
-                      <span>Submitting Evaluation...</span>
+                      <span>Submitting...</span>
+                    </>
+                  ) : outcome === 'Requires Clarification' ? (
+                    <>
+                      <HiRefresh className="w-4 h-4" />
+                      <span>Return for Clarification</span>
+                    </>
+                  ) : outcome === 'Technically Suitable' ? (
+                    <>
+                      <HiCheckCircle className="w-4 h-4" />
+                      <span>Approve &amp; Forward to Committee</span>
                     </>
                   ) : (
                     <>
                       <HiShieldCheck className="w-4 h-4" />
-                      <span>Submit Technical Evaluation</span>
+                      <span>Submit Evaluation</span>
                     </>
                   )}
                 </Button>

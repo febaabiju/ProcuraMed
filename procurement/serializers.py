@@ -332,16 +332,33 @@ class RequisitionSerializer(serializers.ModelSerializer):
                                 'items': f"Item #{idx + 1}: Category '{item_cat}' is not allowed for department '{dept_name}'. Allowed categories: {', '.join(allowed_categories)}."
                             })
 
-        # Prevent Department Staff from setting statuses that bypass Purchase Officer review
-        if user and user.is_authenticated:
-            r_name = user.role.name.lower() if getattr(user, 'role', None) else ''
-            is_privileged = user.is_superuser or user.is_staff or any(x in r_name for x in ['purchase', 'committee', 'admin'])
-            if not is_privileged:
-                desired_status = attrs.get('status')
-                if desired_status and desired_status not in [Requisition.StatusChoices.DRAFT, Requisition.StatusChoices.SUBMITTED]:
-                    raise serializers.ValidationError({
-                        'status': f"Department Staff cannot directly set status to '{desired_status}'. Requisitions must be submitted for Purchase Officer Review."
-                    })
+        # Check if this is a resubmission of a requisition returned for technical clarification
+        is_to_resubmit = (
+            self.instance and
+            self.instance.status == Requisition.StatusChoices.RETURNED and
+            self.instance.is_returned_for_technical_clarification()
+        )
+
+        desired_status = attrs.get('status')
+        if is_to_resubmit and desired_status in [Requisition.StatusChoices.SUBMITTED, Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION]:
+            assigned_to = self.instance.assigned_technical_officer
+            if not assigned_to or not assigned_to.is_active:
+                to_name = (assigned_to.get_full_name() or assigned_to.username) if assigned_to else "Assigned Technical Officer"
+                raise serializers.ValidationError({
+                    'detail': f"The assigned Technical Officer ({to_name}) is currently inactive or unavailable. Please contact the administrator or Purchase Officer."
+                })
+            # Route directly to PENDING_TECHNICAL_EVALUATION for the same Technical Officer
+            attrs['status'] = Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION
+        else:
+            # Prevent Department Staff from setting statuses that bypass Purchase Officer review
+            if user and user.is_authenticated:
+                r_name = user.role.name.lower() if getattr(user, 'role', None) else ''
+                is_privileged = user.is_superuser or user.is_staff or any(x in r_name for x in ['purchase', 'committee', 'admin'])
+                if not is_privileged:
+                    if desired_status and desired_status not in [Requisition.StatusChoices.DRAFT, Requisition.StatusChoices.SUBMITTED]:
+                        raise serializers.ValidationError({
+                            'status': f"Department Staff cannot directly set status to '{desired_status}'. Requisitions must be submitted for Purchase Officer Review."
+                        })
 
         return super().validate(attrs)
 
@@ -391,11 +408,17 @@ class RequisitionSerializer(serializers.ModelSerializer):
                 instance.category = first_category
 
             # When modified or resubmitted, technical evaluation must be decided again by PO
-            if instance.status in [Requisition.StatusChoices.DRAFT, Requisition.StatusChoices.RETURNED, Requisition.StatusChoices.SUBMITTED]:
-                instance.requires_technical_evaluation = False
-                instance.technical_specialization = None
-                instance.assigned_technical_officer = None
-                instance.technical_assigned_at = None
+            # UNLESS this requisition was returned for clarification by a Technical Officer,
+            # in which case the Technical Officer assignment and technical evaluation requirement must be preserved.
+            is_to_clarification = instance.is_returned_for_technical_clarification()
+            if not is_to_clarification:
+                if instance.status in [Requisition.StatusChoices.DRAFT, Requisition.StatusChoices.RETURNED, Requisition.StatusChoices.SUBMITTED]:
+                    instance.requires_technical_evaluation = False
+                    instance.technical_specialization = None
+                    instance.assigned_technical_officer = None
+                    instance.technical_assigned_at = None
+            else:
+                instance.requires_technical_evaluation = True
 
         instance.save()
         return instance

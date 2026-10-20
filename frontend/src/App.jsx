@@ -74,19 +74,11 @@ function App() {
           />
           <Route
             path="/technical-officer/assigned-reviews"
-            element={
-              <TechnicalOfficerProtectedRoute>
-                <TechnicalOfficerEvaluationsPage />
-              </TechnicalOfficerProtectedRoute>
-            }
+            element={<Navigate to="/technical-officer/evaluations" replace />}
           />
           <Route
             path="/technical-officer/history"
-            element={
-              <TechnicalOfficerProtectedRoute>
-                <TechnicalOfficerPlaceholderPage path="/technical-officer/history" />
-              </TechnicalOfficerProtectedRoute>
-            }
+            element={<Navigate to="/technical-officer/evaluations?tab=completed" replace />}
           />
           <Route
             path="/technical-officer/notifications"

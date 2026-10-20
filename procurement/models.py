@@ -634,6 +634,34 @@ class Requisition(models.Model):
 
         return selected_to
 
+    def is_returned_for_technical_clarification(self):
+        """
+        Checks if this requisition was returned for clarification by a Technical Officer.
+        Ensures the assigned Technical Officer is preserved and routed directly back to them upon resubmission.
+        """
+        if not self.assigned_technical_officer_id:
+            return False
+        # If the requisition has already moved forward past technical evaluation or reached a terminal/approved state,
+        # it is no longer actively returned for clarification.
+        if self.status in [
+            self.StatusChoices.PENDING_COMMITTEE_REVIEW,
+            self.StatusChoices.PENDING_APPROVAL,
+            self.StatusChoices.APPROVED,
+            self.StatusChoices.RFQ_ISSUED,
+            self.StatusChoices.REJECTED,
+            self.StatusChoices.CANCELLED,
+            self.StatusChoices.COMPLETED,
+        ]:
+            return False
+        if self.technical_recommendation in ['Requires Clarification', 'REQUIRES_CLARIFICATION', 'Return for Clarification']:
+            return True
+        if self.pk:
+            latest_eval = self.technical_evaluations.order_by('-created_at').first()
+            if latest_eval and latest_eval.recommendation in ['Requires Clarification', 'REQUIRES_CLARIFICATION', 'Return for Clarification']:
+                return True
+        return False
+
+
     def save(self, *args, **kwargs):
         if not self.req_number:
             year = timezone.now().strftime('%Y')

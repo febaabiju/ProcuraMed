@@ -2,7 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.db import transaction
 from django.db.models import Q
@@ -40,9 +40,11 @@ class RequisitionViewSet(viewsets.ModelViewSet):
         if self.action == 'review':
             return [IsAuthenticated(), IsPurchaseOfficerOrAdmin()]
         elif self.action == 'approve':
-            return [IsAuthenticated(), IsCommitteeOrAdmin()]
+            return [IsCommitteeOrAdmin()]
         elif self.action == 'evaluate':
             return [IsAuthenticated(), IsTechnicalOfficer()]
+        elif self.action == 'document':
+            return [AllowAny()]
         return super().get_permissions()
 
     def get_queryset(self):
@@ -51,9 +53,9 @@ class RequisitionViewSet(viewsets.ModelViewSet):
             return Requisition.objects.none()
 
         r_name = user.role.name.lower() if user.role else ''
-        is_staff_role = 'staff' in r_name or 'department' in r_name
-        is_po = any(x in r_name for x in ['purchase', 'officer']) and ('staff' not in r_name)
         is_to = 'technical' in r_name
+        is_staff_role = 'staff' in r_name or 'department' in r_name
+        is_po = ('purchase' in r_name or 'purchase officer' in r_name) and ('staff' not in r_name) and not is_to
         is_admin_or_super = user.is_superuser or user.is_staff or 'admin' in r_name
 
         qs = Requisition.objects.select_related(
@@ -132,20 +134,39 @@ class RequisitionViewSet(viewsets.ModelViewSet):
             raise ValidationError({'detail': 'Submitted requisitions cannot be edited unless returned for correction.'})
 
         prev_status = instance.status
+        is_to_clarification = (
+            prev_status == Requisition.StatusChoices.RETURNED and
+            instance.is_returned_for_technical_clarification()
+        )
         response = super().update(request, *args, **kwargs)
         new_status = request.data.get('status')
-        if prev_status == Requisition.StatusChoices.RETURNED and new_status == Requisition.StatusChoices.SUBMITTED:
-            instance.submitted_at = timezone.now()
-            if not instance.assigned_purchase_officer:
-                instance.assign_purchase_officer(save=False)
-            instance.save(update_fields=['submitted_at', 'assigned_purchase_officer', 'assigned_at'])
-            po_tag = f" Assigned to Purchase Officer @{instance.assigned_purchase_officer.username}." if instance.assigned_purchase_officer else ""
-            AuditLog.objects.create(
-                user=request.user,
-                action='Requisition Resubmitted',
-                module='Purchase Requisition',
-                description=f"Department staff @{request.user.username} corrected and resubmitted requisition {instance.req_number} ('{instance.title}').{po_tag}"
-            )
+        if prev_status == Requisition.StatusChoices.RETURNED and new_status in [Requisition.StatusChoices.SUBMITTED, Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION]:
+            instance.refresh_from_db()
+            if is_to_clarification:
+                assigned_to = instance.assigned_technical_officer
+                to_name = (assigned_to.get_full_name() or assigned_to.username) if assigned_to else "Assigned Technical Officer"
+                instance.status = Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION
+                instance.submitted_at = timezone.now()
+                instance.requires_technical_evaluation = True
+                instance.save(update_fields=['status', 'submitted_at', 'requires_technical_evaluation', 'updated_at'])
+                AuditLog.objects.create(
+                    user=request.user,
+                    action='Requisition Resubmitted for Technical Clarification',
+                    module='Purchase Requisition',
+                    description=f"Department staff @{request.user.username} corrected and resubmitted requisition {instance.req_number} ('{instance.title}') directly to Technical Officer @{assigned_to.username} ({to_name}) for re-evaluation."
+                )
+            else:
+                instance.submitted_at = timezone.now()
+                if not instance.assigned_purchase_officer:
+                    instance.assign_purchase_officer(save=False)
+                instance.save(update_fields=['submitted_at', 'assigned_purchase_officer', 'assigned_at'])
+                po_tag = f" Assigned to Purchase Officer @{instance.assigned_purchase_officer.username}." if instance.assigned_purchase_officer else ""
+                AuditLog.objects.create(
+                    user=request.user,
+                    action='Requisition Resubmitted',
+                    module='Purchase Requisition',
+                    description=f"Department staff @{request.user.username} corrected and resubmitted requisition {instance.req_number} ('{instance.title}').{po_tag}"
+                )
         return response
 
     def partial_update(self, request, *args, **kwargs):
@@ -166,20 +187,39 @@ class RequisitionViewSet(viewsets.ModelViewSet):
             raise ValidationError({'detail': 'Submitted requisitions cannot be edited unless returned for correction.'})
 
         prev_status = instance.status
+        is_to_clarification = (
+            prev_status == Requisition.StatusChoices.RETURNED and
+            instance.is_returned_for_technical_clarification()
+        )
         response = super().partial_update(request, *args, **kwargs)
         new_status = request.data.get('status')
-        if prev_status == Requisition.StatusChoices.RETURNED and new_status == Requisition.StatusChoices.SUBMITTED:
-            instance.submitted_at = timezone.now()
-            if not instance.assigned_purchase_officer:
-                instance.assign_purchase_officer(save=False)
-            instance.save(update_fields=['submitted_at', 'assigned_purchase_officer', 'assigned_at'])
-            po_tag = f" Assigned to Purchase Officer @{instance.assigned_purchase_officer.username}." if instance.assigned_purchase_officer else ""
-            AuditLog.objects.create(
-                user=request.user,
-                action='Requisition Resubmitted',
-                module='Purchase Requisition',
-                description=f"Department staff @{request.user.username} corrected and resubmitted requisition {instance.req_number} ('{instance.title}').{po_tag}"
-            )
+        if prev_status == Requisition.StatusChoices.RETURNED and new_status in [Requisition.StatusChoices.SUBMITTED, Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION]:
+            instance.refresh_from_db()
+            if is_to_clarification:
+                assigned_to = instance.assigned_technical_officer
+                to_name = (assigned_to.get_full_name() or assigned_to.username) if assigned_to else "Assigned Technical Officer"
+                instance.status = Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION
+                instance.submitted_at = timezone.now()
+                instance.requires_technical_evaluation = True
+                instance.save(update_fields=['status', 'submitted_at', 'requires_technical_evaluation', 'updated_at'])
+                AuditLog.objects.create(
+                    user=request.user,
+                    action='Requisition Resubmitted for Technical Clarification',
+                    module='Purchase Requisition',
+                    description=f"Department staff @{request.user.username} corrected and resubmitted requisition {instance.req_number} ('{instance.title}') directly to Technical Officer @{assigned_to.username} ({to_name}) for re-evaluation."
+                )
+            else:
+                instance.submitted_at = timezone.now()
+                if not instance.assigned_purchase_officer:
+                    instance.assign_purchase_officer(save=False)
+                instance.save(update_fields=['submitted_at', 'assigned_purchase_officer', 'assigned_at'])
+                po_tag = f" Assigned to Purchase Officer @{instance.assigned_purchase_officer.username}." if instance.assigned_purchase_officer else ""
+                AuditLog.objects.create(
+                    user=request.user,
+                    action='Requisition Resubmitted',
+                    module='Purchase Requisition',
+                    description=f"Department staff @{request.user.username} corrected and resubmitted requisition {instance.req_number} ('{instance.title}').{po_tag}"
+                )
         return response
 
     def destroy(self, request, *args, **kwargs):
@@ -239,6 +279,45 @@ class RequisitionViewSet(viewsets.ModelViewSet):
                     )
 
         previous_status = requisition.status
+        is_to_clarification = (
+            previous_status == Requisition.StatusChoices.RETURNED and
+            requisition.is_returned_for_technical_clarification()
+        )
+
+        if is_to_clarification:
+            assigned_to = requisition.assigned_technical_officer
+            if not assigned_to or not assigned_to.is_active:
+                to_name = (assigned_to.get_full_name() or assigned_to.username) if assigned_to else "Unknown Officer"
+                return Response(
+                    {
+                        'detail': f"The assigned Technical Officer ({to_name}) is currently inactive or unavailable. Please contact the administrator or Purchase Officer."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            with transaction.atomic():
+                requisition.status = Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION
+                requisition.submitted_at = timezone.now()
+                requisition.requires_technical_evaluation = True
+                # Preserve assigned_technical_officer, technical_specialization, and assigned_purchase_officer
+                requisition.save(update_fields=[
+                    'status', 'submitted_at', 'requires_technical_evaluation', 'updated_at'
+                ])
+
+                to_name = assigned_to.get_full_name() or assigned_to.username
+                AuditLog.objects.create(
+                    user=request.user,
+                    action='Requisition Resubmitted for Technical Clarification',
+                    module='Purchase Requisition',
+                    description=f"Department staff @{request.user.username} corrected and resubmitted requisition {requisition.req_number} ('{requisition.title}') directly to Technical Officer @{assigned_to.username} ({to_name}) for re-evaluation."
+                )
+
+            return Response({
+                'status': 'Requisition Resubmitted for Technical Evaluation',
+                'requisition': RequisitionSerializer(requisition, context={'request': request}).data
+            }, status=status.HTTP_200_OK)
+
+        # Standard PO submission / resubmission
         requisition.status = Requisition.StatusChoices.SUBMITTED
         requisition.submitted_at = timezone.now()
         # Ensure technical evaluation decision is fresh for Purchase Officer review
@@ -246,6 +325,8 @@ class RequisitionViewSet(viewsets.ModelViewSet):
         requisition.technical_specialization = None
         requisition.assigned_technical_officer = None
         requisition.technical_assigned_at = None
+        if not requisition.assigned_purchase_officer:
+            requisition.assign_purchase_officer(save=False)
         requisition.save()
 
         # Record submission / resubmission in AuditLog
@@ -479,7 +560,7 @@ class RequisitionViewSet(viewsets.ModelViewSet):
             'requisition': RequisitionSerializer(requisition, context={'request': request}).data
         }, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=['get'], url_path='document', permission_classes=[IsAuthenticated])
+    @action(detail=True, methods=['get'], url_path='document', permission_classes=[AllowAny])
     def document(self, request, pk=None):
         try:
             requisition = Requisition.objects.get(pk=pk)
@@ -488,21 +569,36 @@ class RequisitionViewSet(viewsets.ModelViewSet):
             raise Http404("Requisition not found.")
 
         user = request.user
+        if not user or not user.is_authenticated:
+            token = request.query_params.get('token')
+            if token:
+                try:
+                    from rest_framework_simplejwt.authentication import JWTAuthentication
+                    jwt_auth = JWTAuthentication()
+                    validated_token = jwt_auth.get_validated_token(token)
+                    user = jwt_auth.get_user(validated_token)
+                except Exception:
+                    pass
+
+        if not user or not user.is_authenticated:
+            from rest_framework.exceptions import NotAuthenticated
+            raise NotAuthenticated("Authentication credentials were not provided.")
+
         r_name = user.role.name.lower() if user.role else ''
-        is_po = any(x in r_name for x in ['purchase', 'officer']) and ('staff' not in r_name)
+        is_to = 'technical' in r_name
+        is_po = ('purchase' in r_name or 'purchase officer' in r_name) and ('staff' not in r_name) and not is_to
         is_admin_or_super = user.is_superuser or user.is_staff or 'admin' in r_name
 
-        if is_po and not is_admin_or_super:
+        if is_to and not is_admin_or_super:
+            if requisition.assigned_technical_officer and requisition.assigned_technical_officer != user:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("You do not have permission to access this supporting document.")
+
+        elif is_po and not is_admin_or_super:
             if requisition.assigned_purchase_officer and requisition.assigned_purchase_officer != user:
                 from rest_framework.exceptions import PermissionDenied
                 raise PermissionDenied("You do not have permission to access this supporting document.")
             if requisition.assigned_purchase_officer is None and requisition.reviewed_by and requisition.reviewed_by != user:
-                from rest_framework.exceptions import PermissionDenied
-                raise PermissionDenied("You do not have permission to access this supporting document.")
-
-        is_to = 'technical' in r_name
-        if is_to and not is_admin_or_super:
-            if requisition.assigned_technical_officer and requisition.assigned_technical_officer != user:
                 from rest_framework.exceptions import PermissionDenied
                 raise PermissionDenied("You do not have permission to access this supporting document.")
 
@@ -521,13 +617,21 @@ class RequisitionViewSet(viewsets.ModelViewSet):
 
         from django.http import FileResponse
         import os
+        import mimetypes
+
         filename = os.path.basename(requisition.supporting_document.name)
-        return FileResponse(
+        content_type, _ = mimetypes.guess_type(filename)
+        if not content_type:
+            content_type = 'application/pdf'
+
+        response = FileResponse(
             requisition.supporting_document.open('rb'),
-            content_type='application/pdf',
+            content_type=content_type,
             as_attachment=False,
             filename=filename
         )
+        response['Content-Disposition'] = f'inline; filename="{filename}"'
+        return response
 
     @action(detail=True, methods=['post'], permission_classes=[IsCommitteeOrAdmin])
     def approve(self, request, pk=None):
@@ -593,47 +697,65 @@ class RequisitionViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 3. Validate Technical Compliance: Compliant / Partially Compliant / Not Compliant
-        compliance_raw = str(request.data.get('compliance', '')).strip()
+        # 3. Validate Evaluation Outcome / Recommendation (Exactly 2 outcomes: Suitable or Return for Clarification)
+        rec_raw = str(
+            request.data.get('recommendation', '') or
+            request.data.get('outcome', '') or
+            request.data.get('action', '')
+        ).strip()
+        rec_lower = rec_raw.lower()
+
+        # Strict business rule: Technical Officers must NOT reject purchase requests
+        if rec_lower in [
+            'technically not suitable', 'not suitable', 'reject', 'rejected', 'rejection', 'not compliant'
+        ]:
+            return Response(
+                {
+                    'recommendation': 'Rejection is not permitted. Technical Officers cannot reject purchase requests; only "Technically Suitable (Approve)" or "Return for Clarification" are allowed.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if rec_lower in ['technically suitable', 'suitable', 'approve', 'approved', 'technically suitable (approve)']:
+            recommendation = TechnicalEvaluation.RecommendationChoices.SUITABLE
+            default_compliance = TechnicalEvaluation.ComplianceChoices.COMPLIANT
+        elif rec_lower in ['return for clarification', 'requires clarification', 'clarification', 'return', 'returned']:
+            recommendation = TechnicalEvaluation.RecommendationChoices.REQUIRES_CLARIFICATION
+            default_compliance = TechnicalEvaluation.ComplianceChoices.PARTIALLY_COMPLIANT
+        else:
+            return Response(
+                {
+                    'recommendation': "Invalid evaluation outcome. Allowed outcomes are 'Technically Suitable (Approve)' or 'Return for Clarification'."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 4. Validate Technical Assessment / Remarks / Clarification Reason (Required text field)
+        remarks = str(
+            request.data.get('remarks', '') or
+            request.data.get('clarification_reason', '') or
+            request.data.get('reason', '')
+        ).strip()
+        if not remarks:
+            if recommendation == TechnicalEvaluation.RecommendationChoices.REQUIRES_CLARIFICATION:
+                return Response(
+                    {'remarks': 'A clarification reason is required when returning a purchase request for clarification. Please explain what specifications or information are needed.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            return Response(
+                {'remarks': 'Technical Assessment / Remarks is required when submitting an evaluation.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 5. Technical Compliance (Derived from outcome or optional explicit choice)
+        compliance_raw = str(request.data.get('compliance', '')).strip().lower()
         compliance_map = {
             'compliant': TechnicalEvaluation.ComplianceChoices.COMPLIANT,
             'partially compliant': TechnicalEvaluation.ComplianceChoices.PARTIALLY_COMPLIANT,
-            'not compliant': TechnicalEvaluation.ComplianceChoices.NOT_COMPLIANT,
         }
-        compliance = compliance_map.get(compliance_raw.lower())
-        if not compliance:
-            return Response(
-                {
-                    'compliance': "Technical Compliance is required. Must be one of: 'Compliant', 'Partially Compliant', 'Not Compliant'."
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        compliance = compliance_map.get(compliance_raw, default_compliance)
 
-        # 4. Validate Technical Assessment / Remarks (Required text field)
-        remarks = str(request.data.get('remarks', '')).strip()
-        if not remarks:
-            return Response(
-                {'remarks': 'Technical Assessment / Remarks is required.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # 5. Validate Recommendation: Technically Suitable / Technically Not Suitable / Requires Clarification
-        rec_raw = str(request.data.get('recommendation', '')).strip()
-        rec_map = {
-            'technically suitable': TechnicalEvaluation.RecommendationChoices.SUITABLE,
-            'technically not suitable': TechnicalEvaluation.RecommendationChoices.NOT_SUITABLE,
-            'requires clarification': TechnicalEvaluation.RecommendationChoices.REQUIRES_CLARIFICATION,
-        }
-        recommendation = rec_map.get(rec_raw.lower())
-        if not recommendation:
-            return Response(
-                {
-                    'recommendation': "Recommendation is required. Must be one of: 'Technically Suitable', 'Technically Not Suitable', 'Requires Clarification'."
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # 6. Optional Supporting Technical Documents
+        # 6. Supporting technical documents are NOT required from Technical Officers
         supporting_doc = request.FILES.get('supporting_document') or request.FILES.get('technical_document')
 
         with transaction.atomic():
@@ -654,26 +776,21 @@ class RequisitionViewSet(viewsets.ModelViewSet):
             if supporting_doc:
                 requisition.technical_document = supporting_doc
 
-            # Workflow state transition
+            # Workflow state transitions (Exactly 2 outcomes)
             if recommendation == TechnicalEvaluation.RecommendationChoices.SUITABLE:
-                # If Technically Suitable -> Move to Procurement Committee review stage
+                # Outcome 1: Technically Suitable (Approve) -> Forward to Procurement Committee review
                 requisition.status = Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW
+                requisition.review_comments = remarks
                 approval_status = Approval.StatusChoices.APPROVED
                 audit_action = 'Technical Evaluation Completed - Technically Suitable'
-                stage_desc = 'Requisition moved to Procurement Committee Review.'
-            elif recommendation == TechnicalEvaluation.RecommendationChoices.NOT_SUITABLE:
-                # If Technically Not Suitable -> Rejected
-                requisition.status = Requisition.StatusChoices.REJECTED
-                approval_status = Approval.StatusChoices.REJECTED
-                audit_action = 'Technical Evaluation Completed - Technically Not Suitable'
-                stage_desc = 'Requisition rejected based on technical evaluation.'
+                stage_desc = 'Requisition approved as Technically Suitable and forwarded to Procurement Committee review.'
             else:
-                # If Requires Clarification -> Returned for clarification
+                # Outcome 2: Return for Clarification -> Return to previous stage for clarification & resubmission
                 requisition.status = Requisition.StatusChoices.RETURNED
                 requisition.review_comments = remarks
                 approval_status = None
                 audit_action = 'Technical Evaluation Completed - Clarification Required'
-                stage_desc = 'Requisition returned for clarification based on technical evaluation.'
+                stage_desc = 'Requisition returned for specification clarification.'
 
             requisition.save(update_fields=[
                 'technical_compliance', 'technical_evaluation_remarks',
@@ -688,7 +805,7 @@ class RequisitionViewSet(viewsets.ModelViewSet):
                     approved_by=user,
                     stage='Technical Evaluation',
                     status=approval_status,
-                    comments=f"Compliance: {compliance} | Recommendation: {recommendation}. Remarks: {remarks}"
+                    comments=f"Technical Evaluation: Technically Suitable. Remarks: {remarks}"
                 )
 
             officer_name = user.get_full_name() or user.username
@@ -698,8 +815,8 @@ class RequisitionViewSet(viewsets.ModelViewSet):
                 module='Purchase Requisition',
                 description=(
                     f"Technical Officer @{user.username} ({officer_name}) evaluated requisition "
-                    f"{requisition.req_number} ('{requisition.title}'). Compliance: {compliance}. "
-                    f"Recommendation: {recommendation}. {stage_desc} Remarks: {remarks}"
+                    f"{requisition.req_number} ('{requisition.title}'). "
+                    f"Outcome: {recommendation}. {stage_desc} Remarks: {remarks}"
                 )
             )
 
@@ -1429,13 +1546,44 @@ class TechnicalOfficerDashboardView(APIView):
         in_progress_evaluations_count = 0
 
         user_evals = TechnicalEvaluation.objects.filter(evaluated_by=user)
-        completed_evaluations_count = user_evals.count()
-        compliance_approved_count = user_evals.filter(
-            recommendation=TechnicalEvaluation.RecommendationChoices.SUITABLE
-        ).count()
-        compliance_rejected_count = user_evals.filter(
-            recommendation=TechnicalEvaluation.RecommendationChoices.NOT_SUITABLE
-        ).count()
+
+        # Collect latest technical evaluation per requisition for this Technical Officer
+        # to ensure each requisition reflects its current evaluation status and cannot
+        # simultaneously appear in conflicting dashboard sections.
+        all_evals = user_evals.select_related(
+            'requisition', 'requisition__department'
+        ).order_by('-created_at')
+
+        latest_evals_by_req = {}
+        history_by_req = {}
+        for te in all_evals:
+            req = te.requisition
+            if not req:
+                continue
+            req_id = req.id
+            if req_id not in latest_evals_by_req:
+                latest_evals_by_req[req_id] = te
+                history_by_req[req_id] = []
+            else:
+                history_by_req[req_id].append({
+                    'id': te.id,
+                    'evaluation_ref': f"TE-{req.req_number}" if req else f"TE-{te.id}",
+                    'compliance': te.compliance,
+                    'recommendation': te.recommendation,
+                    'remarks': te.remarks,
+                    'evaluation_date': te.created_at.isoformat(),
+                    'created_at': te.created_at.isoformat(),
+                })
+
+        completed_evaluations_count = len(latest_evals_by_req)
+        compliance_approved_count = sum(
+            1 for te in latest_evals_by_req.values()
+            if te.recommendation == TechnicalEvaluation.RecommendationChoices.SUITABLE
+        )
+        compliance_rejected_count = sum(
+            1 for te in latest_evals_by_req.values()
+            if te.recommendation == TechnicalEvaluation.RecommendationChoices.NOT_SUITABLE
+        )
 
         # 2. Workflow Pipeline Stages
         pipeline = {
@@ -1475,8 +1623,15 @@ class TechnicalOfficerDashboardView(APIView):
             calculated_amount = str(r.estimated_budget) if r.estimated_budget is not None else str(sum(it.total_price for it in r.items.all()))
 
             doc_url = None
+            actual_doc_url = None
+            api_doc_url = None
             if r.supporting_document:
-                doc_url = request.build_absolute_uri(f"/api/procurement/requisitions/{r.id}/document/")
+                try:
+                    actual_doc_url = request.build_absolute_uri(r.supporting_document.url)
+                except Exception:
+                    actual_doc_url = None
+                api_doc_url = request.build_absolute_uri(f"/api/procurement/requisitions/{r.id}/document/")
+                doc_url = actual_doc_url or api_doc_url
 
             spec_category = r.technical_specialization or (specializations[0] if specializations else 'Biomedical Equipment')
 
@@ -1501,10 +1656,18 @@ class TechnicalOfficerDashboardView(APIView):
                 'status_display': r.get_status_display(),
                 'priority': r.priority,
                 'justification': r.justification or '',
+                'supporting_document': actual_doc_url,
+                'actual_document_url': actual_doc_url,
                 'supporting_document_url': doc_url,
+                'api_document_url': api_doc_url,
                 'items': items_data,
                 'assigned_purchase_officer_name': r.assigned_purchase_officer.get_full_name() if r.assigned_purchase_officer else None,
                 'assigned_purchase_officer_employee_id': r.assigned_purchase_officer.employee_id if r.assigned_purchase_officer else None,
+                'review_comments': r.review_comments or '',
+                'clarification_reason': r.review_comments or '',
+                'technical_evaluation_remarks': r.technical_evaluation_remarks or '',
+                'technical_recommendation': r.technical_recommendation or '',
+                'is_resubmitted_clarification': r.is_returned_for_technical_clarification() or (r.technical_recommendation in ['Requires Clarification', 'Return for Clarification']),
             })
 
         # 4. Pending Technical Reviews widget
@@ -1522,26 +1685,50 @@ class TechnicalOfficerDashboardView(APIView):
             })
 
         # 5. Recent Technical Recommendations widget
+        # Presents the latest evaluation outcome per requisition, with historical clarification cycles attached
         recent_recommendations = []
-        for te in user_evals.select_related('requisition', 'requisition__department').order_by('-created_at')[:8]:
-            doc_url = None
+        for te in list(latest_evals_by_req.values())[:8]:
+            req = te.requisition
+            actual_doc_url = None
+            api_doc_url = None
+            if req and req.supporting_document:
+                try:
+                    actual_doc_url = request.build_absolute_uri(req.supporting_document.url)
+                except Exception:
+                    actual_doc_url = None
+                api_doc_url = request.build_absolute_uri(f"/api/procurement/requisitions/{req.id}/document/")
+
+            te_doc_url = None
             if te.supporting_document:
-                doc_url = request.build_absolute_uri(te.supporting_document.url)
+                try:
+                    te_doc_url = request.build_absolute_uri(te.supporting_document.url)
+                except Exception:
+                    te_doc_url = None
+
+            effective_doc_url = actual_doc_url or te_doc_url or api_doc_url
 
             recent_recommendations.append({
                 'id': te.id,
-                'requisition_id': te.requisition.id,
-                'evaluation_ref': f"TE-{te.requisition.req_number}",
-                'procurement_ref': te.requisition.req_number,
-                'vendor_name': te.requisition.title,
-                'department_name': te.requisition.department.name if te.requisition.department else 'N/A',
-                'category': te.requisition.category,
+                'requisition_id': req.id if req else None,
+                'evaluation_ref': f"TE-{req.req_number}" if req else f"TE-{te.id}",
+                'procurement_ref': req.req_number if req else 'N/A',
+                'req_number': req.req_number if req else 'N/A',
+                'title': req.title if req else 'Evaluation',
+                'vendor_name': req.title if req else 'Evaluation',
+                'department_name': req.department.name if req and req.department else 'N/A',
+                'category': req.category if req else 'N/A',
                 'evaluation_date': te.created_at.isoformat(),
                 'compliance': te.compliance,
                 'recommendation': te.recommendation,
                 'status': 'Completed',
+                'current_requisition_status': req.status if req else 'Completed',
+                'current_technical_recommendation': req.technical_recommendation or te.recommendation,
                 'remarks': te.remarks,
-                'supporting_document_url': doc_url,
+                'clarification_history': history_by_req.get(req.id, []) if req else [],
+                'supporting_document': effective_doc_url,
+                'actual_document_url': actual_doc_url,
+                'supporting_document_url': effective_doc_url,
+                'api_document_url': api_doc_url,
             })
 
         # 6. Notifications

@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
+from django.core.files.uploadedfile import SimpleUploadedFile
 from accounts.models import Role, Department, AuditLog
 from procurement.models import (
     Requisition, RequisitionItem, TechnicalEvaluation, Approval
@@ -200,30 +201,28 @@ class TechnicalEvaluationWorkflowTests(TestCase):
 
     def test_evaluation_validation_missing_fields(self):
         """
-        Compliance, remarks, and recommendation are strictly validated.
+        Remarks and recommendation are strictly validated. Documents are not required.
         """
         self.client.force_authenticate(user=self.to_biomed)
 
-        # Missing compliance
+        # Missing recommendation
         res = self.client.post(f'/api/procurement/requisitions/{self.req_biomed.id}/evaluate/', {
             'remarks': 'Some remarks',
-            'recommendation': 'Technically Suitable'
+            'recommendation': ''
         })
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('compliance', res.data)
+        self.assertIn('recommendation', res.data)
 
         # Missing remarks
         res = self.client.post(f'/api/procurement/requisitions/{self.req_biomed.id}/evaluate/', {
-            'compliance': 'Compliant',
             'remarks': '   ',
             'recommendation': 'Technically Suitable'
         })
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('remarks', res.data)
 
-        # Invalid recommendation
+        # Invalid recommendation choice
         res = self.client.post(f'/api/procurement/requisitions/{self.req_biomed.id}/evaluate/', {
-            'compliance': 'Compliant',
             'remarks': 'Valid remarks',
             'recommendation': 'Invalid Choice'
         })
@@ -282,25 +281,41 @@ class TechnicalEvaluationWorkflowTests(TestCase):
         self.assertIsNotNone(audit)
         self.assertEqual(audit.user, self.to_biomed)
 
-    def test_evaluation_technically_not_suitable_rejects_requisition(self):
+    def test_evaluation_technically_not_suitable_is_forbidden(self):
         """
-        When recommendation is Technically Not Suitable:
-        - Requisition status moves to REJECTED.
-        - Technical remarks are preserved.
+        Technical Officers cannot reject purchase requests.
+        Submitting Technically Not Suitable or rejection returns 400 Bad Request.
         """
         self.client.force_authenticate(user=self.to_biomed)
         res = self.client.post(f'/api/procurement/requisitions/{self.req_biomed.id}/evaluate/', {
-            'compliance': 'Not Compliant',
             'remarks': 'Fails hospital electrical safety harmonics threshold; unacceptable patient leakage current.',
             'recommendation': 'Technically Not Suitable'
         })
-        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Rejection is not permitted', res.data.get('recommendation', ''))
 
+        # Verify requisition status remained unchanged
         self.req_biomed.refresh_from_db()
-        self.assertEqual(self.req_biomed.status, Requisition.StatusChoices.REJECTED)
-        self.assertEqual(self.req_biomed.technical_compliance, 'Not Compliant')
-        self.assertEqual(self.req_biomed.technical_recommendation, 'Technically Not Suitable')
-        self.assertIn('Fails hospital electrical safety', self.req_biomed.technical_evaluation_remarks)
+        self.assertEqual(self.req_biomed.status, Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION)
+
+    def test_evaluation_requires_remarks_for_both_outcomes(self):
+        """
+        Remarks are mandatory when submitting either outcome.
+        """
+        self.client.force_authenticate(user=self.to_biomed)
+        # Empty remarks on Suitable
+        res1 = self.client.post(f'/api/procurement/requisitions/{self.req_biomed.id}/evaluate/', {
+            'recommendation': 'Technically Suitable',
+            'remarks': ''
+        })
+        self.assertEqual(res1.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # Empty remarks on Clarification
+        res2 = self.client.post(f'/api/procurement/requisitions/{self.req_biomed.id}/evaluate/', {
+            'recommendation': 'Return for Clarification',
+            'remarks': '   '
+        })
+        self.assertEqual(res2.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_evaluation_requires_clarification_returns_requisition(self):
         """
@@ -333,3 +348,48 @@ class TechnicalEvaluationWorkflowTests(TestCase):
         })
         self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
         self.assertIn('strictly read-only', res.data.get('detail', ''))
+
+    def test_to_can_view_assigned_requisition_supporting_document(self):
+        """
+        Technical Officer can view the supporting document uploaded by Department Staff
+        for assigned purchase requests, via both actual media URL and document API endpoint.
+        """
+        dummy_file = SimpleUploadedFile("department_specs.pdf", b"%PDF-1.4 test specs", content_type="application/pdf")
+        self.req_biomed.supporting_document = dummy_file
+        self.req_biomed.save()
+
+        try:
+            # 1. Technical Officer Dashboard returns actual document URL
+            self.client.force_authenticate(user=self.to_biomed)
+            dash_res = self.client.get('/api/procurement/technical-officer-dashboard/')
+            self.assertEqual(dash_res.status_code, status.HTTP_200_OK)
+            eval_item = next((item for item in dash_res.data['assigned_evaluations'] if item['id'] == self.req_biomed.id), None)
+            self.assertIsNotNone(eval_item)
+            self.assertIsNotNone(eval_item.get('supporting_document'))
+            self.assertIn('department_specs', eval_item['supporting_document'])
+            self.assertIsNotNone(eval_item.get('actual_document_url'))
+            self.assertIn('department_specs', eval_item['actual_document_url'])
+
+            # 2. Requisition document endpoint delivers inline FileResponse
+            doc_res = self.client.get(f'/api/procurement/requisitions/{self.req_biomed.id}/document/')
+            self.assertEqual(doc_res.status_code, status.HTTP_200_OK)
+            self.assertEqual(doc_res['Content-Type'], 'application/pdf')
+            self.assertIn('inline', doc_res.get('Content-Disposition', ''))
+            if hasattr(doc_res, 'file_to_stream') and doc_res.file_to_stream:
+                doc_res.file_to_stream.close()
+
+            # 3. Another TO not assigned to this requisition is denied access (403)
+            self.client.force_authenticate(user=self.to_imaging)
+            forbidden_res = self.client.get(f'/api/procurement/requisitions/{self.req_biomed.id}/document/')
+            self.assertEqual(forbidden_res.status_code, status.HTTP_403_FORBIDDEN)
+
+            # 4. Unauthenticated access returns 401
+            self.client.logout()
+            unauth_res = self.client.get(f'/api/procurement/requisitions/{self.req_biomed.id}/document/')
+            self.assertEqual(unauth_res.status_code, status.HTTP_401_UNAUTHORIZED)
+        finally:
+            if self.req_biomed.supporting_document and self.req_biomed.supporting_document.storage.exists(self.req_biomed.supporting_document.name):
+                try:
+                    self.req_biomed.supporting_document.storage.delete(self.req_biomed.supporting_document.name)
+                except Exception:
+                    pass
