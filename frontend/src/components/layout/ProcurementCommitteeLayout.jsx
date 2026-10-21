@@ -47,9 +47,7 @@ const ProcurementCommitteeLayout = ({
 
   const navItems = [
     { name: 'Dashboard', path: '/committee/dashboard', icon: HiHome },
-    { name: 'Procurement Reviews', path: '/committee/reviews', icon: HiClipboardCheck },
-    { name: 'Committee Decisions', path: '/committee/decisions', icon: HiCheckCircle },
-    { name: 'Procurement History', path: '/committee/history', icon: HiArchive },
+    { name: 'My Assigned Requests', path: '/committee/reviews', icon: HiClipboardCheck },
     { name: 'Notifications', path: '/committee/notifications', icon: HiBell },
     { name: 'My Profile', path: '/committee/profile', icon: HiUserCircle },
   ];

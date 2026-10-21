@@ -343,9 +343,9 @@ class VendorViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if not user.is_authenticated:
             return Vendor.objects.none()
-        if user.is_superuser or user.is_staff or (user.role and user.role.name.lower() in [
-            'admin', 'system administrator', 'procurement officer', 'committee member', 'technical officer', 'finance officer'
-        ]):
+        if user.is_superuser or user.is_staff or (user.role and any(r in user.role.name.lower() for r in [
+            'admin', 'system administrator', 'procurement officer', 'committee', 'technical', 'finance', 'purchase'
+        ])):
             return super().get_queryset().exclude(
                 application__status__in=[VendorApplication.StatusChoices.REJECTED, VendorApplication.StatusChoices.PENDING]
             )

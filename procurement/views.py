@@ -59,7 +59,7 @@ class RequisitionViewSet(viewsets.ModelViewSet):
         is_admin_or_super = user.is_superuser or user.is_staff or 'admin' in r_name
 
         qs = Requisition.objects.select_related(
-            'department', 'requested_by', 'assigned_purchase_officer', 'assigned_technical_officer'
+            'department', 'requested_by', 'assigned_purchase_officer', 'assigned_technical_officer', 'assigned_committee_member'
         ).prefetch_related('approvals', 'items', 'technical_evaluations')
 
         if is_admin_or_super:
@@ -78,14 +78,15 @@ class RequisitionViewSet(viewsets.ModelViewSet):
                 Q(assigned_purchase_officer__isnull=True, reviewed_by=user)
             )
 
-        is_privileged = (
-            any(role in r_name for role in ['admin', 'committee'])
-        )
+        is_committee = 'committee' in r_name
+        if is_committee:
+            # Procurement Committee Members can ONLY see purchase requests assigned directly to them
+            return qs.filter(Q(assigned_committee_member=user) | Q(requested_by=user))
 
-        if (is_staff_role and not is_privileged) or not is_privileged:
+        if is_staff_role:
             return qs.filter(requested_by=user)
 
-        return qs
+        return qs.filter(requested_by=user)
 
     def perform_create(self, serializer):
         user = self.request.user
@@ -127,6 +128,12 @@ class RequisitionViewSet(viewsets.ModelViewSet):
         if is_po and not (user.is_superuser or user.is_staff):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('Purchase Officers cannot directly edit submitted requisitions. Requisitions are strictly read-only during review.')
+
+        # Procurement Committee Members cannot directly edit purchase request details
+        is_committee = 'committee' in r_name
+        if is_committee and not (user.is_superuser or user.is_staff):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Committee Members cannot directly edit purchase requests. Decisions must be recorded via review actions.')
 
         # Once submitted, Department Staff cannot edit submitted data unless returned for correction
         if is_staff_role and instance.status not in [Requisition.StatusChoices.DRAFT, Requisition.StatusChoices.RETURNED]:
@@ -180,6 +187,18 @@ class RequisitionViewSet(viewsets.ModelViewSet):
         if is_po and not (user.is_superuser or user.is_staff):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('Purchase Officers cannot directly edit submitted requisitions. Requisitions are strictly read-only during review.')
+
+        # Technical Officers cannot directly edit purchase request details
+        is_to = 'technical' in r_name
+        if is_to and not (user.is_superuser or user.is_staff):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Technical Officers cannot edit purchase requests. Original request fields are strictly read-only.')
+
+        # Procurement Committee Members cannot directly edit purchase request details
+        is_committee = 'committee' in r_name
+        if is_committee and not (user.is_superuser or user.is_staff):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Committee Members cannot directly edit purchase requests. Decisions must be recorded via review actions.')
 
         # Once submitted, Department Staff cannot edit submitted data unless returned for correction
         if is_staff_role and instance.status not in [Requisition.StatusChoices.DRAFT, Requisition.StatusChoices.RETURNED]:
@@ -423,6 +442,20 @@ class RequisitionViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            # Rule: Requests that require technical evaluation must continue to reach the Procurement Committee only after the Technical Officer marks them Technically Suitable.
+            # Do not bypass technical evaluation for requests that require it.
+            advisory = requisition.get_technical_evaluation_advisory()
+            if not requires_tech and advisory.get('recommended'):
+                return Response(
+                    {
+                        'requires_technical_evaluation': (
+                            f"Technical Officer evaluation is required for this purchase request based on item specifications/category and cannot be bypassed. "
+                            f"{advisory.get('reason', '')}"
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
         reviewer_name = user.get_full_name() or user.username
 
         with transaction.atomic():
@@ -633,41 +666,251 @@ class RequisitionViewSet(viewsets.ModelViewSet):
         response['Content-Disposition'] = f'inline; filename="{filename}"'
         return response
 
+    @action(detail=True, methods=['get'], url_path='find-vendors', permission_classes=[IsAuthenticated])
+    def find_vendors(self, request, pk=None):
+        """
+        Action to find suitable vendors for a purchase-ready requisition.
+        Returns matching registered vendors based on requisition item categories and requisition category,
+        as well as other active registered suppliers.
+        Only accessible to the assigned committee member (or admin/authorized roles).
+        """
+        requisition = self.get_object()
+        user = request.user
+        r_name = user.role.name.lower() if user.role else ''
+        is_committee = 'committee' in r_name
+        is_admin_or_super = user.is_superuser or user.is_staff or 'admin' in r_name
+
+        if is_committee and not is_admin_or_super:
+            if requisition.assigned_committee_member and requisition.assigned_committee_member != user:
+                return Response(
+                    {'detail': 'You can only source vendors for purchase requests assigned to you.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        # Collect categories for matching
+        match_categories = set()
+        if requisition.category:
+            match_categories.add(requisition.category.strip())
+        for it in requisition.items.all():
+            if it.category:
+                match_categories.add(it.category.strip())
+
+        from vendors.models import Vendor
+        from vendors.serializers import VendorSerializer
+
+        active_vendors_qs = Vendor.objects.filter(
+            is_active=True,
+            status=Vendor.StatusChoices.ACTIVE
+        ).select_related('user', 'application').prefetch_related('supplier_categories')
+
+        matched_vendors_qs = active_vendors_qs.filter(
+            supplier_categories__name__in=match_categories
+        ).distinct().order_by('-performance_rating', 'company_name')
+
+        matched_ids = list(matched_vendors_qs.values_list('id', flat=True))
+        other_vendors_qs = active_vendors_qs.exclude(id__in=matched_ids).order_by('company_name')
+
+        matched_data = VendorSerializer(matched_vendors_qs, many=True, context={'request': request}).data
+        other_data = VendorSerializer(other_vendors_qs, many=True, context={'request': request}).data
+
+        return Response({
+            'requisition_id': requisition.id,
+            'req_number': requisition.req_number,
+            'title': requisition.title,
+            'category': requisition.category,
+            'matched_categories': list(match_categories),
+            'assigned_committee_member_id': requisition.assigned_committee_member_id,
+            'assigned_committee_member_name': requisition.assigned_committee_member.get_full_name() or requisition.assigned_committee_member.username if requisition.assigned_committee_member else None,
+            'matched_vendors': matched_data,
+            'matched_count': len(matched_data),
+            'other_vendors': other_data,
+            'total_active_vendors': len(matched_data) + len(other_data)
+        }, status=status.HTTP_200_OK)
+
     @action(detail=True, methods=['post'], permission_classes=[IsCommitteeOrAdmin])
     def approve(self, request, pk=None):
         requisition = self.get_object()
-        comments = request.data.get('comments', '')
-        stage = request.data.get('stage', 'Committee Approval')
-        
+        user = request.user
+
+        # 1. State validation: Must be pending committee review
+        if requisition.status != Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW:
+            return Response(
+                {
+                    'detail': f'This purchase request cannot be approved because its status is {requisition.get_status_display()} ({requisition.status}). Only requests pending committee review can be approved.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 2. Technical evaluation compliance: Must have passed as Technically Suitable
+        if requisition.requires_technical_evaluation and requisition.technical_recommendation != TechnicalEvaluation.RecommendationChoices.SUITABLE:
+            return Response(
+                {
+                    'detail': 'This purchase request cannot be approved by the committee because it has not passed technical evaluation as Technically Suitable.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        comments = str(
+            request.data.get('comments', '') or
+            request.data.get('remarks', '')
+        ).strip()
+        stage = request.data.get('stage', 'Procurement Committee Review')
+        approval_comments = comments or 'Approved by Procurement Committee.'
+
         with transaction.atomic():
             Approval.objects.create(
                 requisition=requisition,
-                approved_by=request.user,
+                approved_by=user,
                 stage=stage,
                 status=Approval.StatusChoices.APPROVED,
-                comments=comments
+                comments=approval_comments
             )
             requisition.status = Requisition.StatusChoices.APPROVED
-            requisition.save()
-        return Response({'status': 'Requisition Approved Successfully'}, status=status.HTTP_200_OK)
+            requisition.reviewed_by = user
+            requisition.reviewed_at = timezone.now()
+            requisition.review_comments = approval_comments
+            requisition.save(update_fields=[
+                'status', 'reviewed_by', 'reviewed_at', 'review_comments', 'updated_at'
+            ])
+
+            reviewer_name = user.get_full_name() or user.username
+            AuditLog.objects.create(
+                user=user,
+                action='Procurement Committee Approved',
+                module='Procurement Committee',
+                description=f"Procurement Committee member @{user.username} ({reviewer_name}) approved requisition {requisition.req_number} ('{requisition.title}'). Remarks: {approval_comments}"
+            )
+
+        return Response({
+            'status': 'Requisition Approved Successfully',
+            'message': f'Purchase request {requisition.req_number} has been approved by the Procurement Committee.',
+            'requisition': RequisitionSerializer(requisition, context={'request': request}).data
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='return-clarification', permission_classes=[IsCommitteeOrAdmin])
+    def return_clarification(self, request, pk=None):
+        requisition = self.get_object()
+        user = request.user
+
+        # 1. State validation: Must be pending committee review
+        if requisition.status != Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW:
+            return Response(
+                {
+                    'detail': f'This purchase request cannot be returned for clarification because its status is {requisition.get_status_display()} ({requisition.status}). Only requests pending committee review can be returned.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 2. Mandatory clarification remarks
+        remarks = str(
+            request.data.get('remarks', '') or
+            request.data.get('clarification_reason', '') or
+            request.data.get('comments', '')
+        ).strip()
+        if not remarks:
+            return Response(
+                {'remarks': 'Clarification remarks are mandatory. Please explain what information, specifications, or adjustments are needed.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 3. Route to the appropriate existing responsible user based on the issue
+        target = str(
+            request.data.get('target', '') or
+            request.data.get('route_to', '') or
+            request.data.get('recipient', '')
+        ).strip().lower()
+
+        target_map = {
+            'technical_officer': 'technical_officer',
+            'technical officer': 'technical_officer',
+            'to': 'technical_officer',
+            'department_staff': 'department_staff',
+            'department staff': 'department_staff',
+            'staff': 'department_staff',
+            'requester': 'department_staff',
+            'purchase_officer': 'purchase_officer',
+            'purchase officer': 'purchase_officer',
+            'po': 'purchase_officer',
+        }
+        resolved_target = target_map.get(target)
+
+        if not resolved_target:
+            return Response(
+                {
+                    'target': "Please specify the clarification recipient: 'technical_officer' (Technical Officer), 'department_staff' (Department Requester), or 'purchase_officer' (Purchase Officer)."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        with transaction.atomic():
+            if resolved_target == 'technical_officer':
+                if not requisition.assigned_technical_officer:
+                    return Response(
+                        {'detail': 'Cannot route clarification to Technical Officer: No Technical Officer is assigned to this purchase request.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                requisition.status = Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION
+                requisition.technical_recommendation = TechnicalEvaluation.RecommendationChoices.REQUIRES_CLARIFICATION
+                assigned_to = requisition.assigned_technical_officer
+                to_name = assigned_to.get_full_name() or assigned_to.username
+                target_label = f"Technical Officer @{assigned_to.username} ({to_name})"
+                update_fields = [
+                    'status', 'technical_recommendation', 'reviewed_by', 'reviewed_at', 'review_comments', 'updated_at'
+                ]
+            elif resolved_target == 'department_staff':
+                requisition.status = Requisition.StatusChoices.RETURNED
+                staff_name = requisition.requested_by.get_full_name() or requisition.requested_by.username if requisition.requested_by else 'Department Staff'
+                target_label = f"Department Staff @{requisition.requested_by.username if requisition.requested_by else 'staff'} ({staff_name})"
+                update_fields = [
+                    'status', 'reviewed_by', 'reviewed_at', 'review_comments', 'updated_at'
+                ]
+            else:  # purchase_officer
+                if not requisition.assigned_purchase_officer:
+                    requisition.assign_purchase_officer(save=False)
+                requisition.status = Requisition.StatusChoices.SUBMITTED
+                po = requisition.assigned_purchase_officer
+                po_name = (po.get_full_name() or po.username) if po else "Purchase Officer"
+                target_label = f"Purchase Officer @{po.username if po else 'po'} ({po_name})"
+                update_fields = [
+                    'status', 'assigned_purchase_officer', 'reviewed_by', 'reviewed_at', 'review_comments', 'updated_at'
+                ]
+
+            requisition.reviewed_by = user
+            requisition.reviewed_at = timezone.now()
+            requisition.review_comments = remarks
+            requisition.save(update_fields=update_fields)
+
+            Approval.objects.create(
+                requisition=requisition,
+                approved_by=user,
+                stage='Procurement Committee Review',
+                status=Approval.StatusChoices.RETURNED,
+                comments=f"[Returned for Clarification to {target_label}]: {remarks}"
+            )
+
+            reviewer_name = user.get_full_name() or user.username
+            AuditLog.objects.create(
+                user=user,
+                action='Procurement Committee Returned for Clarification',
+                module='Procurement Committee',
+                description=f"Procurement Committee member @{user.username} ({reviewer_name}) returned requisition {requisition.req_number} ('{requisition.title}') for clarification to {target_label}. Remarks: {remarks}"
+            )
+
+        return Response({
+            'status': 'Returned for Clarification',
+            'message': f'Purchase request {requisition.req_number} returned for clarification to {target_label}.',
+            'target': resolved_target,
+            'requisition': RequisitionSerializer(requisition, context={'request': request}).data
+        }, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], permission_classes=[IsCommitteeOrAdmin])
     def reject(self, request, pk=None):
-        requisition = self.get_object()
-        comments = request.data.get('comments', '')
-        stage = request.data.get('stage', 'Committee Rejection')
-
-        with transaction.atomic():
-            Approval.objects.create(
-                requisition=requisition,
-                approved_by=request.user,
-                stage=stage,
-                status=Approval.StatusChoices.REJECTED,
-                comments=comments
-            )
-            requisition.status = Requisition.StatusChoices.REJECTED
-            requisition.save()
-        return Response({'status': 'Requisition Rejected'}, status=status.HTTP_200_OK)
+        return Response(
+            {
+                'detail': 'Rejection is not permitted at this stage of the Procurement Committee workflow.'
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
     @action(
         detail=True,
@@ -1334,142 +1577,288 @@ class ProcurementCommitteeDashboardView(APIView):
             'date_of_joining': user.date_of_joining,
         }
 
-        # 1. Statistics (6 decision-related metrics)
-        under_review_reqs = Requisition.objects.filter(
-            status__in=['UNDER_REVIEW', Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW]
+        # 1. Genuine Requisitions Querysets
+        # Displays purchase-ready requests assigned directly to THIS committee member (Requirement 2 & 5)
+        # Route 1: Purchase Officer approval for requests that do not require technical evaluation (requires_technical_evaluation=False)
+        # Route 2: Technical Officer approval for requests that require technical evaluation (requires_technical_evaluation=True and SUITABLE)
+        pending_reviews_qs = Requisition.objects.filter(
+            status=Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW,
+            assigned_committee_member=user
+        ).filter(
+            Q(requires_technical_evaluation=False) |
+            Q(requires_technical_evaluation=True, technical_recommendation=TechnicalEvaluation.RecommendationChoices.SUITABLE)
+        ).select_related(
+            'department', 'requested_by', 'assigned_technical_officer', 'assigned_purchase_officer', 'assigned_committee_member'
+        ).prefetch_related('items', 'technical_evaluations', 'approvals').order_by('-updated_at', '-created_at')
+
+        # Requests in purchasing/sourcing stages assigned to this committee member
+        approved_requests_qs = Requisition.objects.filter(
+            status__in=[Requisition.StatusChoices.APPROVED, Requisition.StatusChoices.RFQ_ISSUED, Requisition.StatusChoices.COMPLETED],
+            assigned_committee_member=user
+        ).select_related(
+            'department', 'requested_by', 'assigned_technical_officer', 'assigned_purchase_officer', 'assigned_committee_member', 'reviewed_by'
+        ).prefetch_related('items', 'technical_evaluations', 'approvals').order_by('-reviewed_at', '-updated_at')
+
+        # Requests returned for clarification by the committee (separate section)
+        committee_returned_req_ids = Approval.objects.filter(
+            stage__icontains='Committee',
+            status=Approval.StatusChoices.RETURNED
+        ).values_list('requisition_id', flat=True).distinct()
+
+        returned_clarifications_qs = Requisition.objects.filter(
+            assigned_committee_member=user,
+            id__in=committee_returned_req_ids
+        ).exclude(
+            status__in=[Requisition.StatusChoices.APPROVED, Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW]
+        ).select_related(
+            'department', 'requested_by', 'assigned_technical_officer', 'assigned_purchase_officer', 'assigned_committee_member', 'reviewed_by'
+        ).prefetch_related('items', 'technical_evaluations', 'approvals').order_by('-updated_at')
+
+        pending_count = pending_reviews_qs.count()
+        approved_count = approved_requests_qs.count()
+        returned_count = returned_clarifications_qs.count()
+
+        # Decision History for this committee member
+        committee_approvals_qs = Approval.objects.filter(
+            stage__icontains='Committee',
+            requisition__assigned_committee_member=user
+        ).select_related(
+            'requisition', 'approved_by', 'requisition__department', 'requisition__requested_by'
+        ).order_by('-created_at')
+
+        decision_history = []
+        for app in committee_approvals_qs:
+            req = app.requisition
+            decision_history.append({
+                'id': app.id,
+                'requisition_id': req.id if req else None,
+                'req_number': req.req_number if req else 'N/A',
+                'title': req.title if req else 'N/A',
+                'department_name': req.department.name if req and req.department else 'N/A',
+                'category': req.category if req else 'N/A',
+                'estimated_budget': str(req.estimated_budget) if req and req.estimated_budget is not None else '0.00',
+                'decision': 'Approved' if app.status == Approval.StatusChoices.APPROVED else ('Returned for Clarification' if app.status == Approval.StatusChoices.RETURNED else app.status),
+                'decision_status': app.status,
+                'remarks': app.comments or 'Formal committee decision executed.',
+                'reviewer_name': (app.approved_by.get_full_name() or app.approved_by.username) if app.approved_by else 'Procurement Committee',
+                'reviewer_username': app.approved_by.username if app.approved_by else '',
+                'decision_date': app.created_at.isoformat() if app.created_at else None,
+                'current_status': req.status if req else 'N/A',
+                'current_status_display': req.get_status_display() if req else 'N/A',
+                'requires_technical_evaluation': req.requires_technical_evaluation if req else False,
+            })
+
+        clarification_count = len([d for d in decision_history if d['decision_status'] == Approval.StatusChoices.RETURNED])
+
+        # Overall workload distribution across all 5 committee members (Requirement 3)
+        from django.contrib.auth import get_user_model
+        UserModel = get_user_model()
+        committee_members_all = list(UserModel.objects.filter(
+            role__name__icontains='committee',
+            is_active=True
+        ).order_by('employee_id', 'id'))
+
+        workload_overview = []
+        for m in committee_members_all:
+            active_cnt = Requisition.objects.filter(
+                assigned_committee_member=m
+            ).exclude(status__in=[Requisition.StatusChoices.COMPLETED, Requisition.StatusChoices.REJECTED, Requisition.StatusChoices.CANCELLED, 'CLOSED']).count()
+            workload_overview.append({
+                'id': m.id,
+                'name': m.get_full_name() or m.username,
+                'username': m.username,
+                'employee_id': m.employee_id or f'PC{m.id}',
+                'active_workload': active_cnt,
+                'is_current_user': m.id == user.id
+            })
+
+        my_completed_count = Requisition.objects.filter(
+            assigned_committee_member=user,
+            status=Requisition.StatusChoices.COMPLETED
         ).count()
-        pending_committee_reviews_count = Approval.objects.filter(stage__icontains='Committee', status='PENDING').count()
-        if pending_committee_reviews_count == 0:
-            pending_committee_reviews_count = under_review_reqs
+        my_total_count = Requisition.objects.filter(assigned_committee_member=user).count()
 
-        under_review_count = under_review_reqs
-        approved_cases_count = Approval.objects.filter(stage__icontains='Committee', status='APPROVED').count()
-        if approved_cases_count == 0:
-            approved_cases_count = Requisition.objects.filter(status__in=['APPROVED', 'RFQ_ISSUED', 'COMPLETED']).count()
+        # 2. Statistics
+        stats = {
+            'pending_committee_reviews': pending_count,
+            'under_review': pending_count,
+            'my_assigned_requests': pending_count,
+            'approved_cases': approved_count,
+            'active_sourcing': approved_count,
+            'completed_purchases': my_completed_count,
+            'total_assigned': my_total_count,
+            'returned_clarifications': returned_count,
+            'total_decisions': len(decision_history),
+            'rejected_cases': 0,
+            'clarification_requested': clarification_count,
+            'completed_decisions': approved_count,
+            'workload_overview': workload_overview,
+        }
 
-        rejected_cases_count = Approval.objects.filter(stage__icontains='Committee', status='REJECTED').count()
-        if rejected_cases_count == 0:
-            rejected_cases_count = Requisition.objects.filter(status='REJECTED').count()
-
-        clarification_requested_count = Approval.objects.filter(stage__icontains='Committee', status='CLARIFICATION_REQUESTED').count()
-        completed_decisions_count = approved_cases_count + rejected_cases_count
-
-        # 2. Workflow Pipeline Stages
-        committee_tech_eval_count = Quotation.objects.filter(
-            status='UNDER_REVIEW',
-            quotation_request__requisition__requires_technical_evaluation=True
+        # 3. Workflow Pipeline Stages
+        committee_tech_eval_count = Requisition.objects.filter(
+            status=Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION
         ).count()
-        if committee_tech_eval_count == 0:
-            committee_tech_eval_count = Requisition.objects.filter(
-                status='UNDER_REVIEW',
-                requires_technical_evaluation=True
-            ).count()
 
         pipeline = {
-            'department_staff': Requisition.objects.filter(status__in=['DRAFT', 'PENDING_APPROVAL']).count(),
-            'purchase_officer': QuotationRequest.objects.filter(status='OPEN').count(),
+            'department_staff': Requisition.objects.filter(status__in=[Requisition.StatusChoices.DRAFT, Requisition.StatusChoices.RETURNED]).count(),
+            'purchase_officer': Requisition.objects.filter(status=Requisition.StatusChoices.SUBMITTED).count(),
             'technical_evaluation': committee_tech_eval_count,
-            'procurement_committee': pending_committee_reviews_count,
+            'procurement_committee': pending_count,
             'purchase_order': PurchaseOrder.objects.filter(status='ISSUED').count(),
             'vendor_delivery': Delivery.objects.filter(status__in=['DISPATCHED', 'IN_TRANSIT']).count(),
         }
 
-        # 3. Pending Procurement Reviews (Main Table - latest 10)
-        pending_reviews_qs = Requisition.objects.filter(
-            status__in=['UNDER_REVIEW', 'PENDING_APPROVAL', Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW]
-        ).select_related('department', 'requested_by').order_by('-created_at')[:10]
+        def serialize_req_for_committee(req):
+            items_list = list(req.items.all())
+            item_names = ', '.join([it.item_name for it in items_list]) if items_list else req.title
+            total_qty = sum(it.quantity for it in items_list) if items_list else 0
+            dates = [it.required_date for it in items_list if it.required_date]
+            earliest_required_date = min(dates).isoformat() if dates else None
 
-        pending_reviews = []
-        review_queue = []
-        for req in pending_reviews_qs:
-            # Check if technical evaluation is required based on item complexity
+            supporting_doc_url = None
+            if req.supporting_document:
+                try:
+                    supporting_doc_url = request.build_absolute_uri(f"/api/procurement/requisitions/{req.id}/document/")
+                except Exception:
+                    supporting_doc_url = req.supporting_document.url
+
+            tech_doc_url = None
+            if req.technical_document:
+                try:
+                    tech_doc_url = request.build_absolute_uri(req.technical_document.url)
+                except Exception:
+                    tech_doc_url = req.technical_document.url
+
+            # Technical evaluation details handling
             if not req.requires_technical_evaluation:
-                tech_eval_status = 'Not Required'
-                tech_eval_result = 'Not Required'
+                tech_eval_route = "Direct PO Approval (Non-Technical)"
+                tech_eval_result = "Not Required"
+                tech_compliance = "Not Required"
+                tech_remarks = "Technical Officer evaluation not required for routine hospital supplies / consumables per workflow rules."
+                to_name = "Not Applicable (Direct Route)"
+                tech_eval_date = None
             else:
-                tech_eval_status = 'Pending Evaluation'
-                tech_eval_result = 'Pending Technical Review'
-                if req.quotation_requests.exists():
-                    first_rfq = req.quotation_requests.first()
-                    if first_rfq.quotations.filter(status='APPROVED').exists():
-                        tech_eval_status = 'Technically Compliant'
-                        tech_eval_result = 'Recommended for Approval'
-                    elif first_rfq.quotations.filter(status='UNDER_REVIEW').exists():
-                        tech_eval_status = 'Under Evaluation'
-                        tech_eval_result = 'Under Evaluation'
-                    elif first_rfq.quotations.exists():
-                        tech_eval_status = 'Bids Received'
-                        tech_eval_result = 'Bids Received'
+                tech_eval_route = "Technical Officer Evaluation"
+                latest_eval = req.technical_evaluations.order_by('-created_at').first()
+                tech_remarks = req.technical_evaluation_remarks or (latest_eval.remarks if latest_eval else 'Technically suitable.')
+                tech_eval_result = req.technical_recommendation or (latest_eval.recommendation if latest_eval else 'Technically Suitable')
+                tech_compliance = req.technical_compliance or (latest_eval.compliance if latest_eval else 'Compliant')
+                to_name = None
+                if req.assigned_technical_officer:
+                    to_name = req.assigned_technical_officer.get_full_name() or req.assigned_technical_officer.username
+                elif latest_eval and latest_eval.evaluated_by:
+                    to_name = latest_eval.evaluated_by.get_full_name() or latest_eval.evaluated_by.username
+                tech_eval_date = req.technical_evaluated_at.isoformat() if req.technical_evaluated_at else (latest_eval.created_at.isoformat() if latest_eval else None)
 
-            pending_reviews.append({
+            po_name = None
+            po_username = None
+            po_employee_id = None
+            if req.assigned_purchase_officer:
+                po_name = req.assigned_purchase_officer.get_full_name() or req.assigned_purchase_officer.username
+                po_username = req.assigned_purchase_officer.username
+                po_employee_id = req.assigned_purchase_officer.employee_id
+
+            reviewer_name = None
+            if req.reviewed_by:
+                reviewer_name = req.reviewed_by.get_full_name() or req.reviewed_by.username
+
+            # Check if returned for clarification
+            latest_return = req.approvals.filter(
+                stage__icontains='Committee',
+                status=Approval.StatusChoices.RETURNED
+            ).order_by('-created_at').first()
+
+            return {
                 'id': req.id,
                 'req_number': req.req_number,
                 'title': req.title,
                 'department_name': req.department.name if req.department else 'N/A',
-                'category': req.category or (req.department.name if req.department else 'General Supplies'),
-                'submitted_by_name': f"{req.requested_by.employee_id} • {req.requested_by.get_full_name() or req.requested_by.username}" if (req.requested_by and req.requested_by.employee_id) else (req.requested_by.get_full_name() or req.requested_by.username if req.requested_by else 'N/A'),
-                'submission_date': req.created_at.isoformat(),
+                'department_code': req.department.code if req.department else '',
+                'category': req.category or (items_list[0].category if items_list and items_list[0].category else 'General Supplies'),
+                'item_name': item_names,
+                'quantity': total_qty,
+                'estimated_budget': str(req.estimated_budget) if req.estimated_budget is not None else '0.00',
+                'required_date': earliest_required_date,
                 'priority': req.priority,
-                'estimated_budget': str(req.estimated_budget) if req.estimated_budget is not None else None,
-                'technical_evaluation_status': tech_eval_status,
-                'current_status': 'Awaiting Committee Review' if req.status in ['UNDER_REVIEW', Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW] else 'Requisition Submitted',
-                'justification': req.justification,
-            })
+                'status': req.status,
+                'status_display': req.get_status_display(),
+                'submission_date': req.created_at.isoformat() if req.created_at else None,
+                'submitted_by_name': (req.requested_by.get_full_name() or req.requested_by.username) if req.requested_by else 'N/A',
+                'submitted_by_employee_id': req.requested_by.employee_id if req.requested_by else None,
+                'justification': req.justification or '',
+                'supporting_document_url': supporting_doc_url,
+                'technical_document_url': tech_doc_url,
+                'requires_technical_evaluation': req.requires_technical_evaluation,
+                'technical_evaluation_route': tech_eval_route,
+                'technical_evaluation_result': tech_eval_result,
+                'technical_compliance': tech_compliance,
+                'technical_evaluation_remarks': tech_remarks,
+                'technical_evaluated_at': tech_eval_date,
+                'technical_officer_name': to_name,
+                'assigned_technical_officer_name': to_name,
+                'assigned_purchase_officer_name': po_name,
+                'assigned_purchase_officer_username': po_username,
+                'assigned_purchase_officer_employee_id': po_employee_id,
+                'assigned_committee_member_id': req.assigned_committee_member_id,
+                'assigned_committee_member_name': req.assigned_committee_member.get_full_name() or req.assigned_committee_member.username if req.assigned_committee_member else None,
+                'assigned_committee_member_employee_id': req.assigned_committee_member.employee_id if req.assigned_committee_member else None,
+                'committee_assigned_at': req.committee_assigned_at.isoformat() if req.committee_assigned_at else None,
+                'reviewed_by_name': reviewer_name,
+                'reviewed_at': req.reviewed_at.isoformat() if req.reviewed_at else None,
+                'review_comments': req.review_comments or '',
+                'clarification_comments': latest_return.comments if latest_return else None,
+                'clarification_returned_at': latest_return.created_at.isoformat() if latest_return else None,
+                'items': [
+                    {
+                        'id': it.id,
+                        'item_name': it.item_name,
+                        'category': it.category or req.category or 'N/A',
+                        'quantity': it.quantity,
+                        'specifications': it.specifications or 'Standard hospital specification',
+                        'estimated_unit_price': str(it.estimated_unit_price),
+                        'total_price': str(it.total_price),
+                        'required_date': it.required_date.isoformat() if it.required_date else None,
+                    } for it in items_list
+                ],
+                'approvals': [
+                    {
+                        'id': app.id,
+                        'stage': app.stage,
+                        'status': app.status,
+                        'comments': app.comments,
+                        'approved_by': app.approved_by.get_full_name() or app.approved_by.username if app.approved_by else 'N/A',
+                        'created_at': app.created_at.isoformat() if app.created_at else None,
+                    } for app in req.approvals.all()
+                ]
+            }
 
-            # Add to review queue (up to 8 items)
-            if len(review_queue) < 8:
-                review_queue.append({
-                    'id': req.id,
-                    'req_number': req.req_number,
-                    'department_name': req.department.name if req.department else 'N/A',
-                    'submitted_by': f"{req.requested_by.employee_id} • {req.requested_by.get_full_name() or req.requested_by.username}" if (req.requested_by and req.requested_by.employee_id) else (req.requested_by.get_full_name() or req.requested_by.username if req.requested_by else 'N/A'),
-                    'technical_evaluation_result': tech_eval_result,
-                    'priority': req.priority,
-                    'status': 'Pending Committee Review' if req.status in ['UNDER_REVIEW', Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW] else 'Pending Procurement Review',
-                    'estimated_budget': str(req.estimated_budget) if req.estimated_budget is not None else None,
-                })
+        # 4. Serialized Requisitions for all Committee Sections
+        pending_reviews = [serialize_req_for_committee(req) for req in pending_reviews_qs]
+        approved_requests = [serialize_req_for_committee(req) for req in approved_requests_qs]
+        returned_clarifications = [serialize_req_for_committee(req) for req in returned_clarifications_qs]
 
-        # 5. Recent Committee Decisions (latest 8)
-        recent_decisions = []
-        approvals_qs = Approval.objects.filter(
-            stage__icontains='Committee'
-        ).select_related('requisition', 'approved_by', 'requisition__department').order_by('-created_at')[:8]
+        # Review queue summary items (first 8)
+        review_queue = [
+            {
+                'id': r['id'],
+                'req_number': r['req_number'],
+                'department_name': r['department_name'],
+                'item_name': r['item_name'],
+                'submitted_by': r['submitted_by_name'],
+                'technical_evaluation_result': r['technical_evaluation_result'],
+                'requires_technical_evaluation': r['requires_technical_evaluation'],
+                'priority': r['priority'],
+                'status': 'Pending Committee Review',
+                'estimated_budget': r['estimated_budget'],
+                'required_date': r['required_date'],
+            } for r in pending_reviews[:8]
+        ]
 
-        for app in approvals_qs:
-            recent_decisions.append({
-                'id': app.id,
-                'req_number': app.requisition.req_number if app.requisition else 'N/A',
-                'title': app.requisition.title if app.requisition else 'N/A',
-                'department_name': app.requisition.department.name if app.requisition and app.requisition.department else 'N/A',
-                'decision_date': app.created_at.isoformat() if app.created_at else None,
-                'decision': app.status,
-                'status': app.status,
-                'decision_by': app.approved_by.get_full_name() or app.approved_by.username if app.approved_by else 'N/A',
-                'comments': app.comments or 'Formal review decision executed.',
-            })
-
-        # If no explicit Approval objects yet, check approved/rejected Requisitions
-        if not recent_decisions:
-            decided_reqs = Requisition.objects.filter(
-                status__in=['APPROVED', 'REJECTED']
-            ).select_related('department', 'requested_by').order_by('-updated_at')[:8]
-            for r in decided_reqs:
-                recent_decisions.append({
-                    'id': r.id,
-                    'req_number': r.req_number,
-                    'title': r.title,
-                    'department_name': r.department.name if r.department else 'N/A',
-                    'decision_date': r.updated_at.isoformat(),
-                    'decision': 'Approved' if r.status == 'APPROVED' else 'Rejected',
-                    'status': 'Approved' if r.status == 'APPROVED' else 'Rejected',
-                    'decision_by': 'Procurement Committee',
-                    'comments': r.justification or 'Committee review finalized.',
-                })
-
-        # 6. Recent Notifications (latest 8)
+        # 5. Recent Notifications (latest 8)
         notifications = []
         logs = AuditLog.objects.filter(
-            Q(module__in=['approval', 'requisition', 'rfq', 'quotation', 'purchase_order', 'committee']) |
+            Q(module__in=['approval', 'requisition', 'rfq', 'quotation', 'purchase_order', 'committee', 'Procurement Committee']) |
             Q(user=user)
         ).order_by('-created_at')[:8]
 
@@ -1484,18 +1873,14 @@ class ProcurementCommitteeDashboardView(APIView):
 
         return Response({
             'user': user_info,
-            'stats': {
-                'pending_committee_reviews': pending_committee_reviews_count,
-                'under_review': under_review_count,
-                'approved_cases': approved_cases_count,
-                'rejected_cases': rejected_cases_count,
-                'clarification_requested': clarification_requested_count,
-                'completed_decisions': completed_decisions_count,
-            },
+            'stats': stats,
             'pipeline': pipeline,
             'pending_reviews': pending_reviews,
+            'approved_requests': approved_requests,
+            'returned_clarifications': returned_clarifications,
+            'decision_history': decision_history,
+            'recent_decisions': decision_history[:8],
             'review_queue': review_queue,
-            'recent_decisions': recent_decisions,
             'notifications': notifications,
         }, status=status.HTTP_200_OK)
 

@@ -259,7 +259,7 @@ class Requisition(models.Model):
         PENDING_TECHNICAL_EVALUATION = 'PENDING_TECHNICAL_EVALUATION', 'Pending Technical Evaluation'
         PENDING_COMMITTEE_REVIEW = 'PENDING_COMMITTEE_REVIEW', 'Pending Committee Review'
         PENDING_APPROVAL = 'PENDING_APPROVAL', 'Pending Approval'
-        APPROVED = 'APPROVED', 'Approved'
+        APPROVED = 'APPROVED', 'Committee Approved'
         REJECTED = 'REJECTED', 'Rejected'
         RFQ_ISSUED = 'RFQ_ISSUED', 'RFQ Issued'
         COMPLETED = 'COMPLETED', 'Completed'
@@ -351,6 +351,18 @@ class Requisition(models.Model):
         null=True,
         blank=True,
         verbose_name="Technical Supporting Document"
+    )
+    assigned_committee_member = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='assigned_committee_requisitions',
+        verbose_name="Assigned Committee Member",
+        help_text="Designated Procurement Committee member assigned for vendor sourcing and purchasing."
+    )
+    committee_assigned_at = models.DateTimeField(
+        null=True, blank=True, verbose_name="Committee Assigned At"
     )
     submitted_at = models.DateTimeField(null=True, blank=True, verbose_name="Submitted At")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -662,6 +674,88 @@ class Requisition(models.Model):
         return False
 
 
+    def assign_committee_member(self, save=False):
+        """
+        Assigns this purchase-ready requisition to exactly one of the five existing Procurement Committee members.
+        Workload distribution rules:
+        - One request per committee member: Each purchase-ready request is assigned to exactly one member.
+        - Equal workload distribution: Automatic round-robin assignment.
+        - Initially distribute requests one per member in sequence (Member 1, Member 2, ..., Member 5).
+        - After every member has an assignment, assign the next request to the member with the fewest active purchase assignments.
+        - If tied, continue round-robin order.
+        - As earlier assignments are completed, workloads update dynamically to keep distribution balanced.
+        - Preserve the assignment throughout the workflow; prevent duplicate assignments.
+        """
+        if self.assigned_committee_member_id:
+            return self.assigned_committee_member
+
+        from django.contrib.auth import get_user_model
+        from django.utils import timezone
+
+        User = get_user_model()
+        # Retrieve the 5 active committee members in deterministic order (Member 1 to Member 5)
+        committee_members = list(User.objects.filter(
+            role__name__icontains='committee',
+            is_active=True
+        ).order_by('employee_id', 'id'))
+
+        if not committee_members:
+            return None
+
+        N = len(committee_members)
+
+        # Terminal statuses that no longer count as active purchase workload
+        TERMINAL_STATUSES = [
+            self.StatusChoices.COMPLETED,
+            self.StatusChoices.REJECTED,
+            self.StatusChoices.CANCELLED,
+            'CLOSED',
+        ]
+
+        # Calculate active purchase workload for each committee member
+        workloads = {}
+        for m in committee_members:
+            w = Requisition.objects.filter(
+                assigned_committee_member=m
+            ).exclude(status__in=TERMINAL_STATUSES).count()
+            workloads[m.id] = w
+
+        # Find the last assigned member from existing assigned requisitions
+        last_assigned_req = Requisition.objects.filter(
+            assigned_committee_member__isnull=False
+        ).exclude(id=self.id if self.pk else None).order_by('-committee_assigned_at', '-id').first()
+
+        last_index = -1
+        if last_assigned_req and last_assigned_req.assigned_committee_member in committee_members:
+            last_index = committee_members.index(last_assigned_req.assigned_committee_member)
+
+        # Workload balancing rule:
+        # Assign to the member with the fewest active purchase assignments.
+        # If tied, continue round-robin order.
+        min_workload = min(workloads[m.id] for m in committee_members)
+        tied_candidates = [m for m in committee_members if workloads[m.id] == min_workload]
+
+        if len(tied_candidates) == 1:
+            chosen = tied_candidates[0]
+        else:
+            # Continue round-robin circular order from (last_index + 1)
+            chosen = None
+            for step in range(1, N + 1):
+                candidate = committee_members[(last_index + step) % N]
+                if candidate in tied_candidates:
+                    chosen = candidate
+                    break
+            if not chosen:
+                chosen = tied_candidates[0]
+
+        self.assigned_committee_member = chosen
+        self.committee_assigned_at = timezone.now()
+
+        if save and self.pk:
+            self.save(update_fields=['assigned_committee_member', 'committee_assigned_at', 'updated_at'])
+
+        return chosen
+
     def save(self, *args, **kwargs):
         if not self.req_number:
             year = timezone.now().strftime('%Y')
@@ -673,6 +767,10 @@ class Requisition(models.Model):
                 self.submitted_at = timezone.now()
             if not self.assigned_purchase_officer:
                 self.assign_purchase_officer()
+
+        if self.status == self.StatusChoices.PENDING_COMMITTEE_REVIEW:
+            if not self.assigned_committee_member:
+                self.assign_committee_member()
 
         # NOTE: Department Staff submission does NOT decide whether technical evaluation is required.
         # The Purchase Officer decides this explicitly during the Purchase Officer review stage.
@@ -730,6 +828,7 @@ class Approval(models.Model):
         PENDING = 'PENDING', 'Pending'
         APPROVED = 'APPROVED', 'Approved'
         REJECTED = 'REJECTED', 'Rejected'
+        RETURNED = 'RETURNED', 'Returned for Clarification'
 
     requisition = models.ForeignKey(
         Requisition, on_delete=models.CASCADE, related_name='approvals'

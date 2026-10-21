@@ -11,7 +11,12 @@ class IsRequisitionOwnerOrOfficer(BasePermission):
         if request.user.is_superuser or request.user.is_staff:
             return True
         r_name = request.user.role.name.lower() if request.user.role else ''
-        if any(role in r_name for role in ['admin', 'committee']):
+        if 'admin' in r_name:
+            return True
+        if 'committee' in r_name:
+            # Requisitions must only be visible/accessible to their assigned committee member
+            if getattr(obj, 'assigned_committee_member_id', None):
+                return obj.assigned_committee_member_id == request.user.id or obj.requested_by_id == request.user.id
             return True
         if 'technical' in r_name and getattr(obj, 'requires_technical_evaluation', False):
             return True
@@ -33,6 +38,20 @@ class IsCommitteeOrAdmin(BasePermission):
             return True
         r_name = request.user.role.name.lower() if request.user.role else ''
         return any(role in r_name for role in ['admin', 'committee'])
+
+    def has_object_permission(self, request, view, obj):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser or request.user.is_staff:
+            return True
+        r_name = request.user.role.name.lower() if request.user.role else ''
+        if 'admin' in r_name:
+            return True
+        if 'committee' in r_name:
+            if getattr(obj, 'assigned_committee_member_id', None):
+                return obj.assigned_committee_member_id == request.user.id or obj.requested_by_id == request.user.id
+            return True
+        return False
 
 
 class IsPurchaseOfficerOrAdmin(BasePermission):

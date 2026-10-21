@@ -33,7 +33,11 @@ import PurchaseOfficerDashboardPage from './pages/purchaseOfficer/PurchaseOffice
 import PurchaseOfficerRequisitionsPage from './pages/purchaseOfficer/PurchaseOfficerRequisitionsPage';
 import PurchaseOfficerPlaceholderPage from './pages/purchaseOfficer/PurchaseOfficerPlaceholderPage';
 import ProcurementCommitteeDashboardPage from './pages/committee/ProcurementCommitteeDashboardPage';
-import CommitteePlaceholderPage from './pages/committee/CommitteePlaceholderPage';
+import ProcurementCommitteeReviewsPage from './pages/committee/ProcurementCommitteeReviewsPage';
+import ProcurementCommitteeDecisionsPage from './pages/committee/ProcurementCommitteeDecisionsPage';
+import ProcurementCommitteeHistoryPage from './pages/committee/ProcurementCommitteeHistoryPage';
+import ProcurementCommitteeNotificationsPage from './pages/committee/ProcurementCommitteeNotificationsPage';
+import ProcurementCommitteeProfilePage from './pages/committee/ProcurementCommitteeProfilePage';
 import TechnicalOfficerDashboardPage from './pages/technicalOfficer/TechnicalOfficerDashboardPage';
 import TechnicalOfficerEvaluationsPage from './pages/technicalOfficer/TechnicalOfficerEvaluationsPage';
 import TechnicalOfficerPlaceholderPage from './pages/technicalOfficer/TechnicalOfficerPlaceholderPage';
@@ -114,31 +118,23 @@ function App() {
             path="/committee/reviews"
             element={
               <ProcurementCommitteeProtectedRoute>
-                <CommitteePlaceholderPage path="/committee/reviews" />
+                <ProcurementCommitteeReviewsPage />
               </ProcurementCommitteeProtectedRoute>
             }
           />
           <Route
             path="/committee/decisions"
-            element={
-              <ProcurementCommitteeProtectedRoute>
-                <CommitteePlaceholderPage path="/committee/decisions" />
-              </ProcurementCommitteeProtectedRoute>
-            }
+            element={<Navigate to="/committee/dashboard" replace />}
           />
           <Route
             path="/committee/history"
-            element={
-              <ProcurementCommitteeProtectedRoute>
-                <CommitteePlaceholderPage path="/committee/history" />
-              </ProcurementCommitteeProtectedRoute>
-            }
+            element={<Navigate to="/committee/dashboard" replace />}
           />
           <Route
             path="/committee/notifications"
             element={
               <ProcurementCommitteeProtectedRoute>
-                <CommitteePlaceholderPage path="/committee/notifications" />
+                <ProcurementCommitteeNotificationsPage />
               </ProcurementCommitteeProtectedRoute>
             }
           />
@@ -146,7 +142,7 @@ function App() {
             path="/committee/profile"
             element={
               <ProcurementCommitteeProtectedRoute>
-                <CommitteePlaceholderPage path="/committee/profile" />
+                <ProcurementCommitteeProfilePage />
               </ProcurementCommitteeProtectedRoute>
             }
           />

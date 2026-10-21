@@ -115,6 +115,10 @@ class RequisitionSerializer(serializers.ModelSerializer):
     assigned_technical_officer_name = serializers.SerializerMethodField()
     assigned_technical_officer_employee_id = serializers.SerializerMethodField()
     technical_assignment_status = serializers.SerializerMethodField()
+    assigned_committee_member_details = UserSerializer(source='assigned_committee_member', read_only=True)
+    assigned_committee_member_name = serializers.SerializerMethodField()
+    assigned_committee_member_employee_id = serializers.SerializerMethodField()
+    committee_assignment_status = serializers.SerializerMethodField()
     technical_evaluations = TechnicalEvaluationSerializer(many=True, read_only=True)
     technical_document_url = serializers.SerializerMethodField()
     approvals = ApprovalSerializer(many=True, read_only=True)
@@ -136,6 +140,9 @@ class RequisitionSerializer(serializers.ModelSerializer):
             'assigned_technical_officer', 'assigned_technical_officer_details',
             'assigned_technical_officer_name', 'assigned_technical_officer_employee_id',
             'technical_assignment_status', 'technical_assigned_at',
+            'assigned_committee_member', 'assigned_committee_member_details',
+            'assigned_committee_member_name', 'assigned_committee_member_employee_id',
+            'committee_assignment_status', 'committee_assigned_at',
             'technical_compliance', 'technical_evaluation_remarks',
             'technical_recommendation', 'technical_evaluated_at',
             'technical_document', 'technical_document_url', 'technical_evaluations',
@@ -153,6 +160,9 @@ class RequisitionSerializer(serializers.ModelSerializer):
             'assigned_technical_officer', 'assigned_technical_officer_details',
             'assigned_technical_officer_name', 'assigned_technical_officer_employee_id',
             'technical_assignment_status', 'technical_assigned_at',
+            'assigned_committee_member', 'assigned_committee_member_details',
+            'assigned_committee_member_name', 'assigned_committee_member_employee_id',
+            'committee_assignment_status', 'committee_assigned_at',
             'technical_compliance', 'technical_evaluation_remarks',
             'technical_recommendation', 'technical_evaluated_at',
             'technical_document', 'technical_document_url', 'technical_evaluations',
@@ -219,6 +229,22 @@ class RequisitionSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.technical_document.url)
             return obj.technical_document.url
         return None
+
+    def get_assigned_committee_member_name(self, obj):
+        if obj.assigned_committee_member:
+            full_name = obj.assigned_committee_member.get_full_name()
+            return full_name.strip() if full_name and full_name.strip() else obj.assigned_committee_member.username
+        return None
+
+    def get_assigned_committee_member_employee_id(self, obj):
+        if obj.assigned_committee_member and obj.assigned_committee_member.employee_id:
+            return obj.assigned_committee_member.employee_id
+        return None
+
+    def get_committee_assignment_status(self, obj):
+        if obj.assigned_committee_member:
+            return "Assigned"
+        return "Pending Assignment"
 
     def validate_supporting_document(self, value):
         if not value:
