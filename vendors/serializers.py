@@ -1,6 +1,6 @@
 import re
 from rest_framework import serializers
-from .models import SupplierCategory, VendorApplication, Vendor
+from .models import SupplierCategory, VendorApplication, Vendor, VendorProduct
 from accounts.serializers import UserSerializer
 
 
@@ -253,6 +253,95 @@ class AssignVendorCredentialsSerializer(serializers.Serializer):
         return attrs
 
 
+class VendorProductSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source='category.name', read_only=True)
+    category_details = SupplierCategorySerializer(source='category', read_only=True)
+    vendor_name = serializers.CharField(source='vendor.company_name', read_only=True)
+    vendor_code = serializers.CharField(source='vendor.vendor_code', read_only=True)
+    vendor_id = serializers.IntegerField(source='vendor.id', read_only=True)
+    vendor_rating = serializers.DecimalField(source='vendor.performance_rating', max_digits=5, decimal_places=2, read_only=True)
+    price_disclaimer = serializers.SerializerMethodField()
+    is_active = serializers.BooleanField(default=True, required=False)
+
+    class Meta:
+        model = VendorProduct
+        fields = [
+            'id', 'product_code', 'vendor', 'vendor_id', 'vendor_name', 'vendor_code',
+            'vendor_rating', 'name', 'category', 'category_name', 'category_details',
+            'brand', 'model_number', 'description', 'technical_specifications',
+            'unit_of_measure', 'indicative_price', 'is_active',
+            'price_disclaimer', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'product_code', 'vendor', 'created_at', 'updated_at']
+
+    def get_price_disclaimer(self, obj):
+        return "Indicative catalogue price only. Non-binding; formal RFQ quotation required for hospital purchase requests."
+
+    def validate_name(self, value):
+        val = (value or '').strip()
+        if not val:
+            raise serializers.ValidationError("Product name is required.")
+        return val
+
+    def validate_indicative_price(self, value):
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Indicative unit price cannot be negative.")
+        return value
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        name = attrs.get('name') or (self.instance.name if self.instance else '')
+        brand = attrs.get('brand') if 'brand' in attrs else (self.instance.brand if self.instance else '')
+        model_number = attrs.get('model_number') if 'model_number' in attrs else (self.instance.model_number if self.instance else '')
+        category = attrs.get('category') or (self.instance.category if self.instance else None)
+
+        if not category:
+            raise serializers.ValidationError({"category": "Supply category is required."})
+
+        # Resolve vendor
+        vendor = None
+        if self.instance:
+            vendor = self.instance.vendor
+        elif request and getattr(request.user, 'vendor_profile', None):
+            vendor = request.user.vendor_profile
+        elif request and request.user.is_authenticated:
+            vendor = Vendor.objects.filter(user=request.user).first()
+        elif request and hasattr(request, '_target_vendor'):
+            vendor = request._target_vendor
+
+        user = request.user if request else None
+        role_name = user.role.name.lower() if (user and hasattr(user, 'role') and user.role) else ''
+        is_admin = bool(user and (user.is_superuser or user.is_staff or 'admin' in role_name))
+
+        # Check vendor category assignment: vendor can only add/edit products in assigned categories
+        if vendor and not is_admin and ('category' in attrs or not self.instance):
+            is_assigned = vendor.supplier_categories.filter(id=category.id).exists()
+            if not is_assigned and vendor.application:
+                is_assigned = vendor.application.supplier_categories.filter(id=category.id).exists()
+
+            if not is_assigned:
+                raise serializers.ValidationError({
+                    "category": f"Selected category '{category.name}' is not assigned to your vendor profile. You can only manage products under your assigned supply categories."
+                })
+
+        # Duplicate check per vendor
+        if vendor and name:
+            existing_qs = VendorProduct.objects.filter(
+                vendor=vendor,
+                name__iexact=name.strip(),
+                brand__iexact=(brand or '').strip(),
+                model_number__iexact=(model_number or '').strip()
+            )
+            if self.instance:
+                existing_qs = existing_qs.exclude(pk=self.instance.pk)
+            if existing_qs.exists():
+                raise serializers.ValidationError({
+                    "name": "You already have a product with this same Name, Brand, and Model Number in your catalogue."
+                })
+
+        return attrs
+
+
 class VendorSerializer(serializers.ModelSerializer):
     user_details = UserSerializer(source='user', read_only=True)
     application_details = VendorApplicationSerializer(source='application', read_only=True)
@@ -269,6 +358,8 @@ class VendorSerializer(serializers.ModelSerializer):
     portal_username = serializers.SerializerMethodField()
     has_credentials = serializers.SerializerMethodField()
     portal_access_active = serializers.SerializerMethodField()
+    products_count = serializers.SerializerMethodField()
+    products = serializers.SerializerMethodField()
 
     class Meta:
         model = Vendor
@@ -277,6 +368,7 @@ class VendorSerializer(serializers.ModelSerializer):
             'company_name', 'contact_person', 'email', 'phone', 'supplier_categories',
             'supplier_category_details', 'status', 'performance_rating', 'is_active',
             'portal_username', 'has_credentials', 'portal_access_active',
+            'products_count', 'products',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
@@ -292,3 +384,10 @@ class VendorSerializer(serializers.ModelSerializer):
 
     def get_portal_access_active(self, obj):
         return bool(obj.is_active and obj.status == Vendor.StatusChoices.ACTIVE and obj.user and obj.user.is_active)
+
+    def get_products_count(self, obj):
+        return obj.products.filter(is_active=True).count()
+
+    def get_products(self, obj):
+        active_products = obj.products.filter(is_active=True)[:10]
+        return VendorProductSerializer(active_products, many=True).data

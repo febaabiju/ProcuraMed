@@ -16,7 +16,9 @@ import {
   HiExternalLink,
   HiDocumentText,
   HiShieldCheck,
-  HiOutlineSparkles
+  HiOutlineSparkles,
+  HiCube,
+  HiExclamation
 } from 'react-icons/hi';
 import axiosClient from '../../api/axiosClient';
 import Button from '../common/Button';
@@ -33,13 +35,16 @@ const VendorSourcingModal = ({
   const [data, setData] = useState({
     matched_vendors: [],
     matched_count: 0,
-    other_vendors: [],
-    total_active_vendors: 0,
-    matched_categories: []
+    has_category: true,
+    matched_categories: [],
+    matched_products: [],
+    matched_products_count: 0,
+    pricing_notice: '',
+    message: ''
   });
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState('matched'); // 'matched', 'all'
+  const [activeTab, setActiveTab] = useState('matched'); // 'matched', 'products'
   const [selectedVendorDetail, setSelectedVendorDetail] = useState(null);
 
   const fetchVendorsForRequisition = async () => {
@@ -50,29 +55,15 @@ const VendorSourcingModal = ({
       setData({
         matched_vendors: res.data.matched_vendors || [],
         matched_count: res.data.matched_count || 0,
-        other_vendors: res.data.other_vendors || [],
-        total_active_vendors: res.data.total_active_vendors || 0,
-        matched_categories: res.data.matched_categories || []
+        has_category: res.data.has_category !== false,
+        matched_categories: res.data.matched_categories || [],
+        matched_products: res.data.matched_products || [],
+        matched_products_count: res.data.matched_products_count || 0,
+        pricing_notice: res.data.pricing_notice || '',
+        message: res.data.message || ''
       });
     } catch (err) {
-      // Fallback: fetch active vendors directory
-      try {
-        const fallbackRes = await axiosClient.get('/vendors/applications/', {
-          params: { status: 'APPROVED', page_size: 100 }
-        });
-        const allApproved = (fallbackRes.data.results || fallbackRes.data || [])
-          .filter((v) => v.status === 'APPROVED');
-        
-        setData({
-          matched_vendors: allApproved,
-          matched_count: allApproved.length,
-          other_vendors: [],
-          total_active_vendors: allApproved.length,
-          matched_categories: [requisition.category].filter(Boolean)
-        });
-      } catch {
-        setError(err.response?.data?.detail || 'Failed to load matching registered vendors.');
-      }
+      setError(err.response?.data?.detail || 'Failed to load matching registered vendors for this supply category.');
     } finally {
       setLoading(false);
     }
@@ -89,11 +80,8 @@ const VendorSourcingModal = ({
     return `₹${Number(amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
-  // Filter vendors based on search query
-  const displayedVendors = (activeTab === 'matched' ? data.matched_vendors : [
-    ...data.matched_vendors,
-    ...data.other_vendors
-  ]).filter((v) => {
+  // Filter vendors based on search query (strictly within matching category vendors only)
+  const displayedVendors = (data.matched_vendors || []).filter((v) => {
     const q = searchQuery.toLowerCase().trim();
     if (!q) return true;
     const name = (v.company_name || v.name || '').toLowerCase();
@@ -109,6 +97,21 @@ const VendorSourcingModal = ({
       code.includes(q) ||
       categories.includes(q) ||
       products.includes(q)
+    );
+  });
+
+  // Filter products based on search query
+  const displayedProducts = (data.matched_products || []).filter((p) => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      (p.name && p.name.toLowerCase().includes(q)) ||
+      (p.brand && p.brand.toLowerCase().includes(q)) ||
+      (p.model_number && p.model_number.toLowerCase().includes(q)) ||
+      (p.category_name && p.category_name.toLowerCase().includes(q)) ||
+      (p.vendor_name && p.vendor_name.toLowerCase().includes(q)) ||
+      (p.description && p.description.toLowerCase().includes(q)) ||
+      (p.technical_specifications && p.technical_specifications.toLowerCase().includes(q))
     );
   });
 
@@ -163,8 +166,21 @@ const VendorSourcingModal = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
             <div>
-              <span className="text-[10px] uppercase font-bold text-slate-400 block">Category</span>
-              <span className="font-bold text-slate-800">{requisition.category || 'General Supplies'}</span>
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Supply Category</span>
+              {data.matched_categories && data.matched_categories.length > 0 ? (
+                <div className="flex flex-wrap gap-1 mt-0.5">
+                  {data.matched_categories.map((c, idx) => (
+                    <span
+                      key={idx}
+                      className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-violet-100 text-violet-800 border border-violet-200"
+                    >
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <span className="font-bold text-amber-700 italic">Not Assigned</span>
+              )}
             </div>
             <div>
               <span className="text-[10px] uppercase font-bold text-slate-400 block">Required Delivery</span>
@@ -188,6 +204,7 @@ const VendorSourcingModal = ({
                     className="px-2.5 py-1 rounded-lg bg-white border border-violet-200 text-[11px] text-slate-800 font-medium"
                   >
                     <strong>{it.item_name}</strong> (Qty: {it.quantity})
+                    {it.category && <span className="text-violet-600 ml-1">[{it.category}]</span>}
                   </span>
                 ))}
               </div>
@@ -201,7 +218,7 @@ const VendorSourcingModal = ({
             <HiSearch className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Search by vendor name, category, products..."
+              placeholder="Search by vendor, product name, brand, model..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-9 pr-3.5 py-2 text-xs rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-violet-500 bg-white shadow-2xs"
@@ -217,20 +234,34 @@ const VendorSourcingModal = ({
                   : 'text-slate-500 hover:text-slate-800'
               }`}
             >
-              Category Matched ({data.matched_count})
+              Matching Suppliers ({data.matched_count})
             </button>
             <button
-              onClick={() => setActiveTab('all')}
-              className={`flex-1 sm:flex-none px-3 py-1.5 rounded-lg font-bold transition-all ${
-                activeTab === 'all'
+              onClick={() => setActiveTab('products')}
+              className={`flex-1 sm:flex-none px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                activeTab === 'products'
                   ? 'bg-white text-violet-700 shadow-xs'
                   : 'text-slate-500 hover:text-slate-800'
               }`}
             >
-              All Active Suppliers ({data.total_active_vendors})
+              <HiCube className="w-3.5 h-3.5 text-violet-600" />
+              <span>Product Catalogue ({data.matched_products?.length || 0})</span>
             </button>
           </div>
         </div>
+
+        {/* Missing Category Notification Banner */}
+        {!loading && (!data.has_category || data.matched_categories.length === 0) && (
+          <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-3 shadow-xs">
+            <HiExclamation className="w-5 h-5 text-amber-600 flex-shrink-0" />
+            <div>
+              <p className="font-bold">No Supply Category Assigned</p>
+              <p className="text-[11px] text-amber-800">
+                Please select or assign a category to this purchase request before finding vendors.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Error Notification */}
         {error && (
@@ -246,22 +277,119 @@ const VendorSourcingModal = ({
             <HiRefresh className="w-8 h-8 animate-spin text-violet-600" />
             <p className="text-xs font-medium">Matching certified suppliers for {requisition.title}...</p>
           </div>
+        ) : activeTab === 'products' ? (
+          /* Product Catalogue Tab */
+          <div className="space-y-4">
+            {/* Non-binding Legal Notice */}
+            <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-xs text-amber-900 space-y-1">
+              <div className="flex items-center gap-2 font-bold">
+                <HiInformationCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                <span>Supplier Product Catalogue — Sourcing &amp; Research</span>
+              </div>
+              <p className="text-[11px] leading-relaxed">
+                Products listed below are registered in vendor catalogues matching this purchase requisition's category. <strong>Indicative prices are non-binding reference estimates only.</strong> The Procurement Committee must initiate a formal Request for Quotation (RFQ) to obtain binding pricing. Orders are never placed automatically based on catalogue listings.
+              </p>
+            </div>
+
+            {displayedProducts.length === 0 ? (
+              <div className="py-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                <HiCube className="w-10 h-10 text-slate-300 mx-auto" />
+                <p className="text-xs font-bold text-slate-700">No matching products found in supplier catalogue</p>
+                <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                  Registered vendors have not yet listed specific products for the "{data.matched_categories.join(', ') || requisition.category}" category, or no products match your search query.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                {displayedProducts.map((prod) => (
+                  <div
+                    key={prod.id}
+                    className="p-4 rounded-2xl border border-slate-200/80 bg-white hover:border-violet-300 hover:shadow-md transition-all space-y-3 flex flex-col justify-between"
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono font-bold text-violet-600 bg-violet-50 px-2 py-0.5 rounded-md">
+                              {prod.product_code || `PRD-${prod.id}`}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-slate-100 text-slate-700">
+                              {prod.category_name}
+                            </span>
+                          </div>
+                          <h4 className="text-sm font-bold text-slate-900 mt-1 leading-snug">
+                            {prod.name}
+                          </h4>
+                          {(prod.brand || prod.model_number) && (
+                            <p className="text-[11px] text-slate-500">
+                              {prod.brand && <strong>{prod.brand}</strong>}
+                              {prod.brand && prod.model_number && ' • '}
+                              {prod.model_number && <span>Model: {prod.model_number}</span>}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Indicative Price */}
+                        <div className="text-right flex-shrink-0 bg-violet-50/70 p-2 rounded-xl border border-violet-100">
+                          <span className="text-[9px] uppercase font-bold text-slate-400 block">Indicative Price</span>
+                          <span className="text-xs font-black text-violet-700 block">
+                            {formatCurrency(prod.indicative_price)}
+                          </span>
+                          <span className="text-[9px] text-slate-500">/ {prod.unit_of_measure || 'Piece'}</span>
+                        </div>
+                      </div>
+
+                      {/* Technical Specs Preview */}
+                      {prod.technical_specifications && (
+                        <p className="text-[11px] text-slate-600 line-clamp-2 font-mono bg-slate-50 p-2 rounded-lg border border-slate-100">
+                          {prod.technical_specifications}
+                        </p>
+                      )}
+
+                      {/* Vendor attribution */}
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                        <span className="text-slate-500">
+                          Supplied by: <strong className="text-slate-800">{prod.vendor_name}</strong>
+                        </span>
+                        <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                          Non-binding ref
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (!data.has_category || data.matched_categories.length === 0) ? (
+          <div className="py-12 text-center bg-amber-50/50 rounded-2xl border border-dashed border-amber-200 p-8 space-y-3">
+            <HiExclamation className="w-12 h-12 text-amber-500 mx-auto" />
+            <h4 className="text-sm font-bold text-amber-900">Supply Category Required</h4>
+            <p className="text-xs text-amber-800 max-w-md mx-auto">
+              Please select or assign a category to this purchase request before finding vendors.
+            </p>
+          </div>
         ) : displayedVendors.length === 0 ? (
-          <div className="py-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
-            <HiOfficeBuilding className="w-10 h-10 text-slate-300 mx-auto" />
-            <p className="text-xs font-bold text-slate-700">No matching active suppliers found</p>
-            <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
-              No registered suppliers match your search query. Try broadening your search or browse all active suppliers.
+          <div className="py-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2 p-8">
+            <HiOfficeBuilding className="w-12 h-12 text-slate-300 mx-auto" />
+            <p className="text-sm font-bold text-slate-800">No vendors found for this supply category.</p>
+            <p className="text-xs text-slate-500 max-w-md mx-auto">
+              {searchQuery
+                ? `No registered suppliers matching "${searchQuery}" supply the "${data.matched_categories.join(', ') || requisition.category}" category.`
+                : `There are currently no active registered suppliers assigned to the "${data.matched_categories.join(', ') || requisition.category}" category.`}
             </p>
           </div>
         ) : (
           /* Vendors Grid / List */
           <div className="space-y-3">
             <div className="flex items-center justify-between text-xs text-slate-500 px-1">
-              <span>Showing <strong>{displayedVendors.length}</strong> registered supplier(s)</span>
+              <span>
+                Showing <strong>{displayedVendors.length}</strong> matching supplier(s) for{' '}
+                <strong className="text-violet-700">{data.matched_categories.join(', ')}</strong>
+              </span>
               <span className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1">
                 <HiShieldCheck className="w-4 h-4 text-emerald-600" />
-                Verified Hospital Suppliers
+                Verified Category Suppliers
               </span>
             </div>
 
@@ -269,6 +397,7 @@ const VendorSourcingModal = ({
               {displayedVendors.map((vendor) => {
                 const vendorCategories = vendor.supplier_categories || vendor.supply_categories || [];
                 const rating = vendor.performance_rating || 4.8;
+                const productsCount = vendor.products_count ?? (vendor.products?.length || 0);
 
                 return (
                   <div
@@ -278,7 +407,7 @@ const VendorSourcingModal = ({
                     <div className="space-y-2">
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-xs font-mono font-bold text-violet-600">
                               {vendor.vendor_code || `VEN-2026-${String(vendor.id).padStart(5, '0')}`}
                             </span>
@@ -286,6 +415,12 @@ const VendorSourcingModal = ({
                               <HiCheckCircle className="w-3 h-3 text-emerald-600" />
                               Active
                             </span>
+                            {productsCount > 0 && (
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-violet-50 text-violet-700 border border-violet-200 flex items-center gap-1">
+                                <HiCube className="w-3 h-3 text-violet-600" />
+                                {productsCount} Products Listed
+                              </span>
+                            )}
                           </div>
                           <h4 className="text-sm font-bold text-slate-900 mt-0.5 leading-snug">
                             {vendor.company_name || vendor.name}
@@ -378,14 +513,14 @@ const VendorSourcingModal = ({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 z-60 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4"
+              className="fixed inset-0 z-60 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
               onClick={() => setSelectedVendorDetail(null)}
             >
               <motion.div
                 initial={{ scale: 0.95 }}
                 animate={{ scale: 1 }}
                 exit={{ scale: 0.95 }}
-                className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-violet-100 space-y-4"
+                className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-violet-100 space-y-4 my-8 max-h-[85vh] overflow-y-auto"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex items-start justify-between border-b border-slate-100 pb-3">
@@ -425,11 +560,47 @@ const VendorSourcingModal = ({
                     <p className="text-slate-700">{selectedVendorDetail.address || 'N/A'}</p>
                   </div>
                   <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Products & Services</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Products & Services Overview</span>
                     <p className="text-slate-700 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">
                       {selectedVendorDetail.products_services_offered || 'Standard Medical and Hospital Equipment Supply Services.'}
                     </p>
                   </div>
+
+                  {/* Vendor Product Catalogue Preview */}
+                  {selectedVendorDetail.products && selectedVendorDetail.products.length > 0 && (
+                    <div className="pt-2 border-t border-slate-100 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">
+                          Catalogued Products ({selectedVendorDetail.products.length})
+                        </span>
+                        <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                          Indicative Pricing
+                        </span>
+                      </div>
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                        {selectedVendorDetail.products.map((p) => (
+                          <div
+                            key={p.id}
+                            className="p-2.5 rounded-xl bg-violet-50/50 border border-violet-100 flex items-center justify-between text-xs"
+                          >
+                            <div>
+                              <span className="font-bold text-slate-800 block">{p.name}</span>
+                              <span className="text-[10px] text-slate-500">
+                                {p.brand && `${p.brand} • `}
+                                {p.category_name}
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span className="font-bold text-violet-700">
+                                {formatCurrency(p.indicative_price)}
+                              </span>
+                              <span className="text-[10px] text-slate-400 block">/ {p.unit_of_measure || 'Piece'}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex justify-end pt-2 border-t border-slate-100">

@@ -6,6 +6,7 @@ import ProcuraMedLogo from '../common/ProcuraMedLogo';
 import Button from '../common/Button';
 import {
   HiHome,
+  HiCube,
   HiClipboardList,
   HiDocumentText,
   HiShoppingBag,
@@ -46,6 +47,7 @@ const VendorLayout = ({
 
   const navItems = [
     { name: 'Dashboard', path: '/vendor/dashboard', icon: HiHome },
+    { name: 'My Products', path: '/vendor/products', icon: HiCube },
     { name: 'Supply Categories', path: '/vendor/supply-categories', icon: HiTag },
     { name: 'Purchase Requests / Opportunities', path: '/vendor/opportunities', icon: HiClipboardList },
     { name: 'Quotations', path: '/vendor/quotations', icon: HiDocumentText },

@@ -88,6 +88,11 @@ class RequisitionViewSet(viewsets.ModelViewSet):
 
         return qs.filter(requested_by=user)
 
+    def filter_queryset(self, queryset):
+        if self.action == 'find_vendors':
+            return queryset
+        return super().filter_queryset(queryset)
+
     def perform_create(self, serializer):
         user = self.request.user
         r_name = user.role.name.lower() if user.role else ''
@@ -666,12 +671,12 @@ class RequisitionViewSet(viewsets.ModelViewSet):
         response['Content-Disposition'] = f'inline; filename="{filename}"'
         return response
 
-    @action(detail=True, methods=['get'], url_path='find-vendors', permission_classes=[IsAuthenticated])
+    @action(detail=True, methods=['get'], url_path='find-vendors', permission_classes=[IsAuthenticated], filter_backends=[])
     def find_vendors(self, request, pk=None):
         """
         Action to find suitable vendors for a purchase-ready requisition.
-        Returns matching registered vendors based on requisition item categories and requisition category,
-        as well as other active registered suppliers.
+        Returns only matching registered vendors who supply the requested item's category.
+        Excludes vendors from unrelated categories.
         Only accessible to the assigned committee member (or admin/authorized roles).
         """
         requisition = self.get_object()
@@ -687,44 +692,116 @@ class RequisitionViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_403_FORBIDDEN
                 )
 
-        # Collect categories for matching
+        # 1. Identify the requested item's category
         match_categories = set()
-        if requisition.category:
-            match_categories.add(requisition.category.strip())
         for it in requisition.items.all():
-            if it.category:
+            if it.category and it.category.strip():
                 match_categories.add(it.category.strip())
+        if requisition.category and requisition.category.strip():
+            match_categories.add(requisition.category.strip())
 
-        from vendors.models import Vendor
-        from vendors.serializers import VendorSerializer
+        # 6. Handle missing categories
+        if not match_categories:
+            return Response({
+                'requisition_id': requisition.id,
+                'req_number': requisition.req_number,
+                'title': requisition.title,
+                'category': None,
+                'matched_categories': [],
+                'has_category': False,
+                'message': 'No supply category is associated with this purchase request. Please select or assign a category before finding vendors.',
+                'assigned_committee_member_id': requisition.assigned_committee_member_id,
+                'assigned_committee_member_name': (
+                    requisition.assigned_committee_member.get_full_name() or
+                    requisition.assigned_committee_member.username
+                ) if requisition.assigned_committee_member else None,
+                'matched_vendors': [],
+                'matched_count': 0,
+                'other_vendors': [],
+                'total_active_vendors': 0,
+                'matched_products': [],
+                'matched_products_count': 0,
+                'pricing_notice': 'Indicative catalogue prices are non-binding estimates only. Formal quotations must be requested for hospital purchase orders.'
+            }, status=status.HTTP_200_OK)
 
+        from vendors.models import Vendor, VendorProduct
+        from vendors.serializers import VendorSerializer, VendorProductSerializer
+
+        # 2, 3, 4. Match against existing vendor category assignments
         active_vendors_qs = Vendor.objects.filter(
             is_active=True,
             status=Vendor.StatusChoices.ACTIVE
         ).select_related('user', 'application').prefetch_related('supplier_categories')
 
-        matched_vendors_qs = active_vendors_qs.filter(
-            supplier_categories__name__in=match_categories
-        ).distinct().order_by('-performance_rating', 'company_name')
+        # Multi-category support: vendor is included if at least one assigned category matches
+        cat_q = Q()
+        for cat in match_categories:
+            cat_q |= Q(supplier_categories__name__iexact=cat) | Q(application__supplier_categories__name__iexact=cat)
 
-        matched_ids = list(matched_vendors_qs.values_list('id', flat=True))
-        other_vendors_qs = active_vendors_qs.exclude(id__in=matched_ids).order_by('company_name')
+        matched_vendors_qs = active_vendors_qs.filter(cat_q).distinct()
 
+        # 5. Apply filtering to search results
+        search_query = request.query_params.get('search', '').strip()
+        if search_query:
+            matched_vendors_qs = matched_vendors_qs.filter(
+                Q(company_name__icontains=search_query) |
+                Q(contact_person__icontains=search_query) |
+                Q(email__icontains=search_query) |
+                Q(vendor_code__icontains=search_query) |
+                Q(application__products_services_offered__icontains=search_query) |
+                Q(user__username__icontains=search_query)
+            )
+
+        matched_vendors_qs = matched_vendors_qs.order_by('-performance_rating', 'company_name')
         matched_data = VendorSerializer(matched_vendors_qs, many=True, context={'request': request}).data
-        other_data = VendorSerializer(other_vendors_qs, many=True, context={'request': request}).data
+
+        # Catalogue products: ONLY products matching the category and supplied by matching vendors
+        matched_vendor_ids = [v['id'] for v in matched_data]
+        product_cat_q = Q()
+        for cat in match_categories:
+            product_cat_q |= Q(category__name__iexact=cat)
+
+        matched_products_qs = VendorProduct.objects.filter(
+            is_active=True,
+            vendor__is_active=True,
+            vendor__status=Vendor.StatusChoices.ACTIVE,
+            vendor_id__in=matched_vendor_ids
+        ).filter(product_cat_q).select_related('vendor', 'category').distinct()
+
+        if search_query:
+            matched_products_qs = matched_products_qs.filter(
+                Q(name__icontains=search_query) |
+                Q(brand__icontains=search_query) |
+                Q(model_number__icontains=search_query) |
+                Q(description__icontains=search_query) |
+                Q(technical_specifications__icontains=search_query) |
+                Q(product_code__icontains=search_query)
+            )
+
+        matched_products_qs = matched_products_qs.order_by('name')[:40]
+        matched_products_data = VendorProductSerializer(matched_products_qs, many=True, context={'request': request}).data
+
+        primary_category = requisition.category or (list(match_categories)[0] if match_categories else None)
 
         return Response({
             'requisition_id': requisition.id,
             'req_number': requisition.req_number,
             'title': requisition.title,
-            'category': requisition.category,
+            'category': primary_category,
             'matched_categories': list(match_categories),
+            'has_category': True,
             'assigned_committee_member_id': requisition.assigned_committee_member_id,
-            'assigned_committee_member_name': requisition.assigned_committee_member.get_full_name() or requisition.assigned_committee_member.username if requisition.assigned_committee_member else None,
+            'assigned_committee_member_name': (
+                requisition.assigned_committee_member.get_full_name() or
+                requisition.assigned_committee_member.username
+            ) if requisition.assigned_committee_member else None,
             'matched_vendors': matched_data,
             'matched_count': len(matched_data),
-            'other_vendors': other_data,
-            'total_active_vendors': len(matched_data) + len(other_data)
+            'other_vendors': [],  # Unrelated vendors are excluded
+            'total_active_vendors': len(matched_data),
+            'matched_products': matched_products_data,
+            'matched_products_count': len(matched_products_data),
+            'pricing_notice': 'Indicative catalogue prices are non-binding estimates only. Formal quotations must be requested for hospital purchase orders.'
         }, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], permission_classes=[IsCommitteeOrAdmin])

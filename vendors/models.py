@@ -169,3 +169,91 @@ class Vendor(models.Model):
     def __str__(self):
         code = f"[{self.vendor_code}] " if self.vendor_code else ""
         return f"{code}{self.company_name}"
+
+
+class VendorProduct(models.Model):
+    vendor = models.ForeignKey(
+        Vendor,
+        on_delete=models.CASCADE,
+        related_name='products',
+        help_text="Vendor that owns and supplies this product"
+    )
+    product_code = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="Product catalogue code"
+    )
+    name = models.CharField(
+        max_length=255,
+        verbose_name="Product Name"
+    )
+    category = models.ForeignKey(
+        SupplierCategory,
+        on_delete=models.PROTECT,
+        related_name='products',
+        verbose_name="Supply Category"
+    )
+    brand = models.CharField(
+        max_length=150,
+        blank=True,
+        default='',
+        verbose_name="Brand / Manufacturer"
+    )
+    model_number = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        verbose_name="Model Number"
+    )
+    description = models.TextField(
+        blank=True,
+        default='',
+        verbose_name="Product Description"
+    )
+    technical_specifications = models.TextField(
+        blank=True,
+        default='',
+        verbose_name="Technical Specifications"
+    )
+    unit_of_measure = models.CharField(
+        max_length=50,
+        default='Piece',
+        verbose_name="Unit of Measurement",
+        help_text="e.g., Piece, Box, Pack, Unit, Set, Vial, Bottle, Kit, Roll"
+    )
+    indicative_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Indicative Unit Price",
+        help_text="Indicative non-binding unit price. Formal quotations are required for purchase requests."
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name="Active Status",
+        help_text="Whether this product is currently offered by the vendor"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'tbl_vendor_product'
+        verbose_name = 'Vendor Product'
+        verbose_name_plural = 'Vendor Products'
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if not self.product_code:
+            year = timezone.now().strftime('%Y')
+            count = VendorProduct.objects.filter(created_at__year=year).count() + 1
+            code = f"PRD-{year}-{count:05d}"
+            while VendorProduct.objects.filter(product_code=code).exists():
+                count += 1
+                code = f"PRD-{year}-{count:05d}"
+            self.product_code = code
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.name} ({self.vendor.company_name})"

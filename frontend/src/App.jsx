@@ -22,6 +22,7 @@ import AuditLogsPage from './pages/admin/AuditLogsPage';
 import SystemReportsPage from './pages/admin/SystemReportsPage';
 import SystemSettingsPage from './pages/admin/SystemSettingsPage';
 import VendorDashboardPage from './pages/vendor/VendorDashboardPage';
+import VendorProductsPage from './pages/vendor/VendorProductsPage';
 import VendorSupplyCategoriesPage from './pages/vendor/VendorSupplyCategoriesPage';
 import VendorChangePasswordPage from './pages/vendor/VendorChangePasswordPage';
 import VendorPlaceholderPage from './pages/vendor/VendorPlaceholderPage';
@@ -285,6 +286,14 @@ function App() {
             element={
               <VendorProtectedRoute>
                 <VendorDashboardPage />
+              </VendorProtectedRoute>
+            }
+          />
+          <Route
+            path="/vendor/products"
+            element={
+              <VendorProtectedRoute>
+                <VendorProductsPage />
               </VendorProtectedRoute>
             }
           />

@@ -4,6 +4,7 @@ from .views import (
     SupplierCategoryViewSet,
     VendorApplicationViewSet,
     VendorViewSet,
+    VendorProductViewSet,
     VendorDashboardView,
     VendorProfileView
 )
@@ -12,6 +13,7 @@ router = DefaultRouter()
 router.register(r'categories', SupplierCategoryViewSet, basename='supplier-category')
 router.register(r'applications', VendorApplicationViewSet, basename='vendor-application')
 router.register(r'vendors', VendorViewSet, basename='vendor')
+router.register(r'products', VendorProductViewSet, basename='vendor-product')
 
 urlpatterns = [
     path('dashboard-stats/', VendorDashboardView.as_view(), name='vendor-dashboard-stats'),

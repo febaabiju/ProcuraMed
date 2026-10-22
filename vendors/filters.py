@@ -1,5 +1,5 @@
 import django_filters
-from .models import Vendor, VendorApplication, SupplierCategory
+from .models import Vendor, VendorApplication, SupplierCategory, VendorProduct
 
 
 class VendorApplicationFilter(django_filters.FilterSet):
@@ -26,3 +26,17 @@ class VendorFilter(django_filters.FilterSet):
     class Meta:
         model = Vendor
         fields = ['vendor_code', 'company_name', 'contact_person', 'email', 'status', 'is_active']
+
+
+class VendorProductFilter(django_filters.FilterSet):
+    name = django_filters.CharFilter(lookup_expr='icontains')
+    brand = django_filters.CharFilter(lookup_expr='icontains')
+    model_number = django_filters.CharFilter(lookup_expr='icontains')
+    category = django_filters.NumberFilter(field_name='category__id')
+    category_name = django_filters.CharFilter(field_name='category__name', lookup_expr='icontains')
+    is_active = django_filters.BooleanFilter()
+    vendor_id = django_filters.NumberFilter(field_name='vendor__id')
+
+    class Meta:
+        model = VendorProduct
+        fields = ['category', 'category_name', 'is_active', 'vendor_id', 'brand']

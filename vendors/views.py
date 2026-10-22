@@ -1,20 +1,23 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
 from django.db import models, transaction
 from django.contrib.auth import get_user_model
 
-from .models import SupplierCategory, VendorApplication, Vendor
+from .models import SupplierCategory, VendorApplication, Vendor, VendorProduct
 from .serializers import (
     SupplierCategorySerializer,
     VendorApplicationSerializer,
     VendorApplicationReviewSerializer,
     AssignVendorCredentialsSerializer,
-    VendorSerializer
+    VendorSerializer,
+    VendorProductSerializer
 )
-from .filters import VendorApplicationFilter, VendorFilter
+from .filters import VendorApplicationFilter, VendorFilter, VendorProductFilter
 from .emails import send_vendor_approval_email, send_vendor_rejection_email
 from accounts.models import Role
 from accounts.permissions import IsAdminRole, IsVendorUser
@@ -35,9 +38,53 @@ class SupplierCategoryViewSet(viewsets.ReadOnlyModelViewSet):
             models.When(name=name, then=models.Value(idx))
             for idx, name in enumerate(SupplierCategory.CATEGORIES)
         ]
-        return SupplierCategory.objects.all().annotate(
+        qs = SupplierCategory.objects.all().annotate(
             sort_order=models.Case(*order_cases, default=models.Value(999), output_field=models.IntegerField())
         ).order_by('sort_order', 'id')
+
+        # Filter by assigned categories for the logged-in vendor if requested
+        assigned_only = self.request.query_params.get('assigned_only') or self.request.query_params.get('mine')
+        if assigned_only in ['true', 'True', '1', True]:
+            user = self.request.user
+            if not user or not user.is_authenticated:
+                return SupplierCategory.objects.none()
+            vendor = getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+            if not vendor:
+                return SupplierCategory.objects.none()
+            cat_ids = list(vendor.supplier_categories.values_list('id', flat=True))
+            if not cat_ids and vendor.application:
+                cat_ids = list(vendor.application.supplier_categories.values_list('id', flat=True))
+            return qs.filter(id__in=cat_ids)
+
+        vendor_id = self.request.query_params.get('vendor_id')
+        if vendor_id:
+            return qs.filter(vendors__id=vendor_id)
+
+        return qs
+
+    @action(detail=False, methods=['get'], url_path='assigned', permission_classes=[IsAuthenticated])
+    def assigned(self, request):
+        """
+        Returns only the supplier categories assigned to the currently logged-in vendor.
+        """
+        user = request.user
+        vendor = getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+        if not vendor:
+            return Response([], status=status.HTTP_200_OK)
+
+        cat_ids = list(vendor.supplier_categories.values_list('id', flat=True))
+        if not cat_ids and vendor.application:
+            cat_ids = list(vendor.application.supplier_categories.values_list('id', flat=True))
+
+        order_cases = [
+            models.When(name=name, then=models.Value(idx))
+            for idx, name in enumerate(SupplierCategory.CATEGORIES)
+        ]
+        assigned_cats = SupplierCategory.objects.filter(id__in=cat_ids).annotate(
+            sort_order=models.Case(*order_cases, default=models.Value(999), output_field=models.IntegerField())
+        ).order_by('sort_order', 'id')
+        serializer = self.get_serializer(assigned_cats, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 
@@ -592,3 +639,177 @@ class VendorProfileView(APIView):
             vendor_data['reviewed_at'] = vendor.application.reviewed_at
 
         return Response(vendor_data, status=status.HTTP_200_OK)
+
+
+class VendorProductViewSet(viewsets.ModelViewSet):
+    serializer_class = VendorProductSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = VendorProductFilter
+    search_fields = ['name', 'brand', 'model_number', 'description', 'technical_specifications', 'product_code']
+    ordering_fields = ['name', 'indicative_price', 'created_at', 'category__name']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return VendorProduct.objects.none()
+
+        role_name = user.role.name.lower() if user.role else ''
+        is_vendor = 'vendor' in role_name or hasattr(user, 'vendor_profile')
+        is_committee = 'committee' in role_name
+        is_officer = 'purchase' in role_name or 'technical' in role_name
+        is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
+
+        # 1. Vendor view: strictly only their own products
+        if is_vendor and not is_admin:
+            vendor = getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+            if not vendor:
+                return VendorProduct.objects.none()
+            return VendorProduct.objects.filter(vendor=vendor).select_related('vendor', 'category')
+
+        # 2. Committee / Officer / Admin view:
+        # Access active products catalogue across active approved vendors
+        if is_committee or is_officer or is_admin:
+            qs = VendorProduct.objects.select_related('vendor', 'category')
+            vendor_id = self.request.query_params.get('vendor_id')
+            if vendor_id:
+                qs = qs.filter(vendor_id=vendor_id)
+            if not is_admin or self.request.query_params.get('active_only') == 'true':
+                qs = qs.filter(
+                    is_active=True,
+                    vendor__is_active=True,
+                    vendor__status=Vendor.StatusChoices.ACTIVE
+                )
+            return qs
+
+        return VendorProduct.objects.none()
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        vendor = getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+        if not vendor:
+            raise PermissionDenied("Only registered and approved vendors can create product catalogue listings.")
+        if not vendor.is_active or vendor.status != Vendor.StatusChoices.ACTIVE:
+            raise ValidationError({"detail": "Your vendor portal account is inactive. You cannot add products."})
+
+        # Validate that category belongs to vendor's assigned categories
+        category = serializer.validated_data.get('category')
+        if category:
+            is_assigned = vendor.supplier_categories.filter(id=category.id).exists()
+            if not is_assigned and vendor.application:
+                is_assigned = vendor.application.supplier_categories.filter(id=category.id).exists()
+            if not is_assigned:
+                raise ValidationError({
+                    "category": f"Selected category '{category.name}' is not assigned to your vendor profile. You can only add products under your assigned supply categories."
+                })
+
+        serializer.save(vendor=vendor)
+
+    def perform_update(self, serializer):
+        product = self.get_object()
+        user = self.request.user
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
+
+        # Ownership check: vendors can only update their own products
+        if not is_admin:
+            if not product.vendor.user or product.vendor.user != user:
+                raise PermissionDenied("You do not have permission to edit another vendor's product.")
+
+            category = serializer.validated_data.get('category')
+            if category:
+                vendor = product.vendor
+                is_assigned = vendor.supplier_categories.filter(id=category.id).exists()
+                if not is_assigned and vendor.application:
+                    is_assigned = vendor.application.supplier_categories.filter(id=category.id).exists()
+                if not is_assigned:
+                    raise ValidationError({
+                        "category": f"Selected category '{category.name}' is not assigned to your vendor profile. You can only manage products under your assigned supply categories."
+                    })
+
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        user = self.request.user
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
+
+        # Ownership check: vendors can only delete their own products
+        if not is_admin:
+            if not instance.vendor.user or instance.vendor.user != user:
+                raise PermissionDenied("You do not have permission to delete another vendor's product.")
+        instance.delete()
+
+    @action(detail=True, methods=['post'], url_path='toggle-active')
+    def toggle_active(self, request, pk=None):
+        """Toggle active status (activate / deactivate) of a vendor product."""
+        product = self.get_object()
+        user = request.user
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
+
+        if not is_admin:
+            if not product.vendor.user or product.vendor.user != user:
+                raise PermissionDenied("You do not have permission to modify this product's status.")
+
+        product.is_active = not product.is_active
+        product.save(update_fields=['is_active', 'updated_at'])
+        status_label = "activated" if product.is_active else "deactivated"
+        return Response({
+            'detail': f"Product '{product.name}' has been {status_label}.",
+            'product': VendorProductSerializer(product, context={'request': request}).data
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], url_path='catalogue')
+    def catalogue(self, request):
+        """
+        Global product catalogue search available to Procurement Committee, Officers, and Admins
+        when researching available hospital supplies and potential suppliers.
+        Returns only active products from active approved vendors with non-binding indicative pricing.
+        """
+        user = request.user
+        role_name = user.role.name.lower() if user.role else ''
+        is_allowed = user.is_superuser or user.is_staff or any(
+            r in role_name for r in ['committee', 'purchase', 'technical', 'admin']
+        )
+        if not is_allowed:
+            raise PermissionDenied("Only procurement committee members and officers can access the cross-vendor product catalogue.")
+
+        qs = VendorProduct.objects.filter(
+            is_active=True,
+            vendor__is_active=True,
+            vendor__status=Vendor.StatusChoices.ACTIVE
+        ).select_related('vendor', 'category')
+
+        # Filter by search
+        search_q = request.query_params.get('search', '').strip()
+        if search_q:
+            qs = qs.filter(
+                models.Q(name__icontains=search_q) |
+                models.Q(brand__icontains=search_q) |
+                models.Q(model_number__icontains=search_q) |
+                models.Q(description__icontains=search_q) |
+                models.Q(technical_specifications__icontains=search_q) |
+                models.Q(category__name__icontains=search_q) |
+                models.Q(vendor__company_name__icontains=search_q)
+            )
+
+        # Filter by category
+        cat_id = request.query_params.get('category')
+        if cat_id:
+            qs = qs.filter(category_id=cat_id)
+
+        # Filter by vendor
+        vendor_id = request.query_params.get('vendor_id')
+        if vendor_id:
+            qs = qs.filter(vendor_id=vendor_id)
+
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)

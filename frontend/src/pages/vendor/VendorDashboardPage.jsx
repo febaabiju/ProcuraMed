@@ -10,6 +10,7 @@ import {
   HiDocumentText,
   HiShoppingBag,
   HiTruck,
+  HiCube,
   HiCheckCircle,
   HiClock,
   HiRefresh,
@@ -594,6 +595,45 @@ const VendorDashboardPage = () => {
                   </p>
                 </div>
               )}
+            </div>
+
+            {/* Widget: My Product Catalogue */}
+            <div className="bg-white rounded-3xl border border-violet-100 shadow-sm p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center font-bold text-xs">
+                    <HiCube className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-extrabold text-slate-900">My Product Catalogue</h3>
+                    <p className="text-[10px] text-slate-400">Manage products, specifications &amp; pricing</p>
+                  </div>
+                </div>
+                <Link to="/vendor/products" className="text-[11px] font-bold text-violet-600 hover:text-violet-800">
+                  Manage →
+                </Link>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-violet-50/50 border border-violet-100 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-700">Listed Products</span>
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-violet-100 text-violet-800">
+                    {data.vendor?.products_count ?? 0} Active
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Hospital procurement committees search your catalogue when sourcing products for approved requisitions.
+                </p>
+                <div className="pt-1">
+                  <Link
+                    to="/vendor/products"
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-violet-700 hover:text-violet-900"
+                  >
+                    <span>Open Product Catalogue</span>
+                    <span>→</span>
+                  </Link>
+                </div>
+              </div>
             </div>
 
             {/* Widget 2: Delivery Tracking */}
