@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .models import (
-    Requisition, Approval, QuotationRequest, 
+    Requisition, Approval, QuotationRequest, RFQItem, RFQVendorInvitation,
     Quotation, QuotationItem, PurchaseOrder, PurchaseOrderItem,
     TechnicalEvaluation
 )
@@ -29,12 +29,38 @@ class ApprovalAdmin(admin.ModelAdmin):
     ordering = ('-created_at',)
 
 
+class RFQItemInline(admin.TabularInline):
+    model = RFQItem
+    extra = 0
+
+
+class RFQVendorInvitationInline(admin.TabularInline):
+    model = RFQVendorInvitation
+    extra = 0
+
+
 @admin.register(QuotationRequest)
 class QuotationRequestAdmin(admin.ModelAdmin):
     list_display = ('id', 'rfq_number', 'title', 'requisition', 'created_by', 'issue_date', 'due_date', 'status')
     list_filter = ('status', 'issue_date', 'due_date')
     search_fields = ('rfq_number', 'title', 'terms_and_conditions')
+    inlines = [RFQItemInline, RFQVendorInvitationInline]
     ordering = ('-created_at',)
+
+
+@admin.register(RFQVendorInvitation)
+class RFQVendorInvitationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'quotation_request', 'vendor', 'status', 'invited_at', 'invited_by')
+    list_filter = ('status', 'invited_at')
+    search_fields = ('quotation_request__rfq_number', 'vendor__company_name')
+    ordering = ('-invited_at',)
+
+
+@admin.register(RFQItem)
+class RFQItemAdmin(admin.ModelAdmin):
+    list_display = ('id', 'quotation_request', 'item_name', 'category', 'quantity', 'unit_of_measurement')
+    list_filter = ('category',)
+    search_fields = ('item_name', 'quotation_request__rfq_number')
 
 
 class QuotationItemInline(admin.TabularInline):

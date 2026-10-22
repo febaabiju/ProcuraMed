@@ -22,11 +22,13 @@ import {
 } from 'react-icons/hi';
 import axiosClient from '../../api/axiosClient';
 import Button from '../common/Button';
+import CreateRFQModal from './CreateRFQModal';
 
 const VendorSourcingModal = ({
   requisition,
   isOpen,
   onClose,
+  onSuccess
 }) => {
   if (!isOpen || !requisition) return null;
 
@@ -46,6 +48,8 @@ const VendorSourcingModal = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('matched'); // 'matched', 'products'
   const [selectedVendorDetail, setSelectedVendorDetail] = useState(null);
+  const [selectedVendorIds, setSelectedVendorIds] = useState([]);
+  const [createRFQOpen, setCreateRFQOpen] = useState(false);
 
   const fetchVendorsForRequisition = async () => {
     setLoading(true);
@@ -78,6 +82,20 @@ const VendorSourcingModal = ({
   const formatCurrency = (amount) => {
     if (amount === undefined || amount === null || amount === '') return '₹0.00';
     return `₹${Number(amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const toggleVendorSelect = (vendorId) => {
+    setSelectedVendorIds((prev) =>
+      prev.includes(vendorId) ? prev.filter((id) => id !== vendorId) : [...prev, vendorId]
+    );
+  };
+
+  const handleSelectAll = () => {
+    if (selectedVendorIds.length === displayedVendors.length && displayedVendors.length > 0) {
+      setSelectedVendorIds([]);
+    } else {
+      setSelectedVendorIds(displayedVendors.map((v) => v.id));
+    }
   };
 
   // Filter vendors based on search query (strictly within matching category vendors only)
@@ -382,15 +400,41 @@ const VendorSourcingModal = ({
         ) : (
           /* Vendors Grid / List */
           <div className="space-y-3">
-            <div className="flex items-center justify-between text-xs text-slate-500 px-1">
-              <span>
-                Showing <strong>{displayedVendors.length}</strong> matching supplier(s) for{' '}
-                <strong className="text-violet-700">{data.matched_categories.join(', ')}</strong>
-              </span>
-              <span className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1">
-                <HiShieldCheck className="w-4 h-4 text-emerald-600" />
-                Verified Category Suppliers
-              </span>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 px-3 py-2 bg-slate-50 rounded-2xl border border-slate-200/80">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleSelectAll}
+                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-white text-violet-700 border border-violet-200 hover:bg-violet-50 transition-colors flex items-center gap-1.5 shadow-2xs"
+                >
+                  <input
+                    type="checkbox"
+                    checked={displayedVendors.length > 0 && selectedVendorIds.length === displayedVendors.length}
+                    onChange={handleSelectAll}
+                    className="w-3.5 h-3.5 rounded text-violet-600 focus:ring-violet-500 border-slate-300 pointer-events-none"
+                  />
+                  <span>
+                    {selectedVendorIds.length === displayedVendors.length && displayedVendors.length > 0
+                      ? 'Deselect All'
+                      : 'Select All'}
+                  </span>
+                </button>
+                <span>
+                  Showing <strong>{displayedVendors.length}</strong> matching supplier(s) for{' '}
+                  <strong className="text-violet-700">{data.matched_categories.join(', ')}</strong>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {selectedVendorIds.length > 0 && (
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-violet-100 text-violet-800 border border-violet-200">
+                    {selectedVendorIds.length} Selected for RFQ
+                  </span>
+                )}
+                <span className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1">
+                  <HiShieldCheck className="w-4 h-4 text-emerald-600" />
+                  Verified Category Suppliers
+                </span>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
@@ -398,33 +442,50 @@ const VendorSourcingModal = ({
                 const vendorCategories = vendor.supplier_categories || vendor.supply_categories || [];
                 const rating = vendor.performance_rating || 4.8;
                 const productsCount = vendor.products_count ?? (vendor.products?.length || 0);
+                const isSelected = selectedVendorIds.includes(vendor.id);
 
                 return (
                   <div
                     key={vendor.id}
-                    className="p-4 rounded-2xl border border-slate-200/80 bg-white hover:border-violet-300 hover:shadow-md transition-all space-y-3 flex flex-col justify-between"
+                    onClick={() => toggleVendorSelect(vendor.id)}
+                    className={`p-4 rounded-2xl border transition-all space-y-3 flex flex-col justify-between cursor-pointer ${
+                      isSelected
+                        ? 'border-violet-500 bg-violet-50/20 shadow-md ring-1 ring-violet-400'
+                        : 'border-slate-200/80 bg-white hover:border-violet-300 hover:shadow-md'
+                    }`}
                   >
                     <div className="space-y-2">
                       <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-xs font-mono font-bold text-violet-600">
-                              {vendor.vendor_code || `VEN-2026-${String(vendor.id).padStart(5, '0')}`}
-                            </span>
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-0.5">
-                              <HiCheckCircle className="w-3 h-3 text-emerald-600" />
-                              Active
-                            </span>
-                            {productsCount > 0 && (
-                              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-violet-50 text-violet-700 border border-violet-200 flex items-center gap-1">
-                                <HiCube className="w-3 h-3 text-violet-600" />
-                                {productsCount} Products Listed
+                        <div className="flex items-start gap-2.5">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              toggleVendorSelect(vendor.id);
+                            }}
+                            className="w-4 h-4 mt-0.5 rounded text-violet-600 focus:ring-violet-500 border-slate-300 cursor-pointer"
+                          />
+                          <div>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs font-mono font-bold text-violet-600">
+                                {vendor.vendor_code || `VEN-2026-${String(vendor.id).padStart(5, '0')}`}
                               </span>
-                            )}
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-0.5">
+                                <HiCheckCircle className="w-3 h-3 text-emerald-600" />
+                                Active
+                              </span>
+                              {productsCount > 0 && (
+                                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-violet-50 text-violet-700 border border-violet-200 flex items-center gap-1">
+                                  <HiCube className="w-3 h-3 text-violet-600" />
+                                  {productsCount} Products Listed
+                                </span>
+                              )}
+                            </div>
+                            <h4 className="text-sm font-bold text-slate-900 mt-0.5 leading-snug">
+                              {vendor.company_name || vendor.name}
+                            </h4>
                           </div>
-                          <h4 className="text-sm font-bold text-slate-900 mt-0.5 leading-snug">
-                            {vendor.company_name || vendor.name}
-                          </h4>
                         </div>
 
                         {/* Performance Rating */}
@@ -485,7 +546,10 @@ const VendorSourcingModal = ({
                       </div>
                     </div>
 
-                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <div
+                      className="pt-2 border-t border-slate-100 flex items-center justify-between"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <button
                         type="button"
                         onClick={() => setSelectedVendorDetail(vendor)}
@@ -495,9 +559,17 @@ const VendorSourcingModal = ({
                         <span>View Supplier Profile</span>
                       </button>
 
-                      <span className="text-[10px] font-semibold text-slate-400">
-                        Certified Vendor
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => toggleVendorSelect(vendor.id)}
+                        className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border transition-all ${
+                          isSelected
+                            ? 'bg-violet-600 text-white border-violet-600 shadow-2xs'
+                            : 'bg-white text-slate-700 border-slate-200 hover:border-violet-300'
+                        }`}
+                      >
+                        {isSelected ? '✓ Selected' : '+ Select for RFQ'}
+                      </button>
                     </div>
                   </div>
                 );
@@ -603,7 +675,23 @@ const VendorSourcingModal = ({
                   )}
                 </div>
 
-                <div className="flex justify-end pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      toggleVendorSelect(selectedVendorDetail.id);
+                    }}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                      selectedVendorIds.includes(selectedVendorDetail.id)
+                        ? 'bg-violet-600 text-white border-violet-600 shadow-2xs'
+                        : 'bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100'
+                    }`}
+                  >
+                    {selectedVendorIds.includes(selectedVendorDetail.id)
+                      ? '✓ Selected for RFQ'
+                      : '+ Select This Vendor for RFQ'}
+                  </button>
+
                   <Button
                     variant="outline"
                     size="sm"
@@ -619,20 +707,60 @@ const VendorSourcingModal = ({
         </AnimatePresence>
 
         {/* Modal Footer */}
-        <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-          <span className="text-[11px] text-slate-400">
-            Requisition {requisition.req_number} • Ready for vendor sourcing
-          </span>
-          <Button
-            variant="outline"
-            size="md"
-            onClick={onClose}
-            className="border-slate-200 text-slate-700 text-xs font-semibold"
-          >
-            Close Sourcing View
-          </Button>
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100">
+          <div className="text-[11px] text-slate-500">
+            Requisition <strong className="text-slate-800">{requisition.req_number}</strong> •{' '}
+            {selectedVendorIds.length > 0 ? (
+              <span className="font-bold text-violet-700">
+                {selectedVendorIds.length} eligible vendor(s) selected
+              </span>
+            ) : (
+              <span>Select eligible vendor(s) using checkboxes to request quotation</span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+            <Button
+              variant="outline"
+              size="md"
+              onClick={onClose}
+              className="border-slate-200 text-slate-700 text-xs font-semibold"
+            >
+              Close
+            </Button>
+            <Button
+              variant="primary"
+              size="md"
+              disabled={selectedVendorIds.length === 0}
+              onClick={() => setCreateRFQOpen(true)}
+              className="text-xs font-bold flex items-center gap-1.5 shadow-sm shadow-violet-500/20"
+              title={selectedVendorIds.length === 0 ? 'Select at least one vendor to request quotation' : ''}
+            >
+              <HiDocumentText className="w-4 h-4" />
+              <span>
+                Request Quotation {selectedVendorIds.length > 0 ? `(${selectedVendorIds.length})` : ''}
+              </span>
+            </Button>
+          </div>
         </div>
       </motion.div>
+
+      {/* Create RFQ Modal */}
+      {createRFQOpen && (
+        <CreateRFQModal
+          isOpen={createRFQOpen}
+          onClose={() => setCreateRFQOpen(false)}
+          requisition={requisition}
+          selectedVendors={(data.matched_vendors || []).filter((v) =>
+            selectedVendorIds.includes(v.id)
+          )}
+          onSuccess={(newRFQ) => {
+            setCreateRFQOpen(false);
+            if (onSuccess) onSuccess(newRFQ);
+            onClose();
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -472,6 +472,9 @@ const ProcurementCommitteeDashboardPage = () => {
             setSourcingModalOpen(false);
             setSourcingReq(null);
           }}
+          onSuccess={() => {
+            fetchDashboardData();
+          }}
         />
       )}
     </ProcurementCommitteeLayout>

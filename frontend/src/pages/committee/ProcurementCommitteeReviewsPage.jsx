@@ -311,6 +311,9 @@ const ProcurementCommitteeReviewsPage = () => {
             setSourcingModalOpen(false);
             setSourcingReq(null);
           }}
+          onSuccess={() => {
+            fetchPendingReviews();
+          }}
         />
       )}
     </ProcurementCommitteeLayout>

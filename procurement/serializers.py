@@ -3,7 +3,8 @@ import json
 from decimal import Decimal
 from rest_framework import serializers
 from .models import (
-    Requisition, RequisitionItem, Approval, QuotationRequest, Quotation, QuotationItem, PurchaseOrder, PurchaseOrderItem,
+    Requisition, RequisitionItem, Approval, QuotationRequest, RFQItem, RFQVendorInvitation,
+    Quotation, QuotationItem, PurchaseOrder, PurchaseOrderItem,
     TechnicalEvaluation
 )
 from accounts.models import Department
@@ -474,19 +475,71 @@ class QuotationSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'quotation_number', 'total_amount', 'created_at', 'updated_at']
 
 
+class RFQItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RFQItem
+        fields = [
+            'id', 'quotation_request', 'requisition_item', 'item_name',
+            'category', 'quantity', 'unit_of_measurement',
+            'technical_specifications', 'estimated_unit_price', 'total_estimated_price',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'total_estimated_price', 'created_at', 'updated_at']
+
+
+class RFQVendorInvitationSerializer(serializers.ModelSerializer):
+    vendor_details = VendorSerializer(source='vendor', read_only=True)
+    invited_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RFQVendorInvitation
+        fields = [
+            'id', 'quotation_request', 'vendor', 'vendor_details',
+            'status', 'invited_at', 'invited_by', 'invited_by_name', 'notes'
+        ]
+        read_only_fields = ['id', 'invited_at']
+
+    def get_invited_by_name(self, obj):
+        if obj.invited_by:
+            return obj.invited_by.get_full_name() or obj.invited_by.username
+        return None
+
+
 class QuotationRequestSerializer(serializers.ModelSerializer):
     requisition_details = RequisitionSerializer(source='requisition', read_only=True)
     created_by_details = UserSerializer(source='created_by', read_only=True)
+    cancelled_by_details = UserSerializer(source='cancelled_by', read_only=True)
+    items = RFQItemSerializer(many=True, read_only=True)
+    vendor_invitations = RFQVendorInvitationSerializer(many=True, read_only=True)
     quotations = QuotationSerializer(many=True, read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    is_expired = serializers.SerializerMethodField()
+    invited_vendors_count = serializers.SerializerMethodField()
 
     class Meta:
         model = QuotationRequest
         fields = [
-            'id', 'rfq_number', 'requisition', 'requisition_details', 'created_by',
-            'created_by_details', 'title', 'issue_date', 'due_date',
-            'terms_and_conditions', 'status', 'quotations', 'created_at', 'updated_at'
+            'id', 'rfq_number', 'requisition', 'requisition_details',
+            'created_by', 'created_by_details', 'title', 'issue_date', 'due_date',
+            'delivery_requirements', 'delivery_location', 'estimated_budget',
+            'terms_and_conditions', 'status', 'status_display', 'is_expired',
+            'cancellation_reason', 'cancelled_by', 'cancelled_by_details', 'cancelled_at',
+            'items', 'vendor_invitations', 'invited_vendors_count',
+            'quotations', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'rfq_number', 'created_by', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'rfq_number', 'created_by', 'cancelled_by', 'cancelled_at',
+            'created_at', 'updated_at', 'status_display', 'is_expired', 'invited_vendors_count'
+        ]
+
+    def get_is_expired(self, obj):
+        from django.utils import timezone
+        if obj.due_date and obj.status in [QuotationRequest.StatusChoices.OPEN, QuotationRequest.StatusChoices.SENT]:
+            return obj.due_date < timezone.now().date()
+        return obj.status == QuotationRequest.StatusChoices.EXPIRED
+
+    def get_invited_vendors_count(self, obj):
+        return obj.vendor_invitations.count()
 
 
 class PurchaseOrderItemSerializer(serializers.ModelSerializer):

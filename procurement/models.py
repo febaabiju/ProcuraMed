@@ -899,9 +899,12 @@ class TechnicalEvaluation(models.Model):
 
 class QuotationRequest(models.Model):
     class StatusChoices(models.TextChoices):
+        DRAFT = 'DRAFT', 'Draft'
+        SENT = 'SENT', 'Sent'
         OPEN = 'OPEN', 'Open'
         CLOSED = 'CLOSED', 'Closed'
         CANCELLED = 'CANCELLED', 'Cancelled'
+        EXPIRED = 'EXPIRED', 'Expired'
 
     rfq_number = models.CharField(max_length=50, unique=True, blank=True, verbose_name="RFQ Number")
     requisition = models.ForeignKey(
@@ -913,9 +916,20 @@ class QuotationRequest(models.Model):
     title = models.CharField(max_length=255)
     issue_date = models.DateField(auto_now_add=True)
     due_date = models.DateField()
+    delivery_requirements = models.TextField(blank=True, null=True, help_text="Delivery timeline and location requirements")
+    delivery_location = models.CharField(max_length=255, blank=True, null=True)
+    estimated_budget = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     terms_and_conditions = models.TextField(blank=True, null=True)
     status = models.CharField(
-        max_length=20, choices=StatusChoices.choices, default=StatusChoices.OPEN
+        max_length=20, choices=StatusChoices.choices, default=StatusChoices.SENT
+    )
+    cancellation_reason = models.TextField(blank=True, null=True)
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='cancelled_rfqs'
+    )
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    invited_vendors = models.ManyToManyField(
+        'vendors.Vendor', through='RFQVendorInvitation', related_name='invited_quotation_requests', blank=True
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -935,6 +949,72 @@ class QuotationRequest(models.Model):
 
     def __str__(self):
         return f"{self.rfq_number} - {self.title}"
+
+
+class RFQItem(models.Model):
+    quotation_request = models.ForeignKey(
+        QuotationRequest, on_delete=models.CASCADE, related_name='items'
+    )
+    requisition_item = models.ForeignKey(
+        RequisitionItem, on_delete=models.SET_NULL, null=True, blank=True, related_name='rfq_items'
+    )
+    item_name = models.CharField(max_length=255)
+    category = models.CharField(max_length=150, blank=True, null=True)
+    quantity = models.PositiveIntegerField(default=1)
+    unit_of_measurement = models.CharField(max_length=50, default='Piece', blank=True)
+    technical_specifications = models.TextField(blank=True, null=True)
+    estimated_unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    total_estimated_price = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'tbl_rfq_item'
+        verbose_name = 'RFQ Item'
+        verbose_name_plural = 'RFQ Items'
+        ordering = ['id']
+
+    def save(self, *args, **kwargs):
+        if self.quantity and self.estimated_unit_price is not None:
+            self.total_estimated_price = self.quantity * self.estimated_unit_price
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.item_name} (x{self.quantity}) for {self.quotation_request.rfq_number}"
+
+
+class RFQVendorInvitation(models.Model):
+    class InvitationStatus(models.TextChoices):
+        INVITED = 'INVITED', 'Invited'
+        VIEWED = 'VIEWED', 'Viewed'
+        ACCEPTED = 'ACCEPTED', 'Accepted'
+        DECLINED = 'DECLINED', 'Declined'
+        QUOTED = 'QUOTED', 'Quoted'
+
+    quotation_request = models.ForeignKey(
+        QuotationRequest, on_delete=models.CASCADE, related_name='vendor_invitations'
+    )
+    vendor = models.ForeignKey(
+        'vendors.Vendor', on_delete=models.CASCADE, related_name='rfq_invitations'
+    )
+    status = models.CharField(
+        max_length=20, choices=InvitationStatus.choices, default=InvitationStatus.INVITED
+    )
+    invited_at = models.DateTimeField(auto_now_add=True)
+    invited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='sent_rfq_invitations'
+    )
+    notes = models.TextField(blank=True, null=True)
+
+    class Meta:
+        db_table = 'tbl_rfq_vendor_invitation'
+        verbose_name = 'RFQ Vendor Invitation'
+        verbose_name_plural = 'RFQ Vendor Invitations'
+        unique_together = ('quotation_request', 'vendor')
+        ordering = ['-invited_at']
+
+    def __str__(self):
+        return f"{self.quotation_request.rfq_number} -> {self.vendor.company_name} ({self.status})"
 
 
 class Quotation(models.Model):

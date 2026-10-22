@@ -19,11 +19,12 @@ class QuotationRequestFilter(django_filters.FilterSet):
     rfq_number = django_filters.CharFilter(lookup_expr='icontains')
     title = django_filters.CharFilter(lookup_expr='icontains')
     requisition = django_filters.NumberFilter(field_name='requisition__id')
+    req_number = django_filters.CharFilter(field_name='requisition__req_number', lookup_expr='icontains')
     status = django_filters.CharFilter(lookup_expr='exact')
 
     class Meta:
         model = QuotationRequest
-        fields = ['rfq_number', 'title', 'requisition', 'status']
+        fields = ['rfq_number', 'title', 'requisition', 'req_number', 'status']
 
 
 class QuotationFilter(django_filters.FilterSet):

@@ -14,12 +14,14 @@ from accounts.models import AuditLog
 from accounts.permissions import IsDepartmentStaff, IsPurchaseOfficer, IsCommitteeMember, IsTechnicalOfficer
 from inventory.models import Delivery
 from .models import (
-    Requisition, Approval, QuotationRequest, Quotation, QuotationItem, PurchaseOrder, PurchaseOrderItem,
+    Requisition, Approval, QuotationRequest, RFQItem, RFQVendorInvitation,
+    Quotation, QuotationItem, PurchaseOrder, PurchaseOrderItem,
     TechnicalEvaluation,
     NON_TECHNICAL_CATEGORIES, CATEGORY_TO_SPECIALIZATION
 )
 from .serializers import (
     RequisitionSerializer, ApprovalSerializer, QuotationRequestSerializer,
+    RFQItemSerializer, RFQVendorInvitationSerializer,
     QuotationSerializer, QuotationItemSerializer, PurchaseOrderSerializer, PurchaseOrderItemSerializer,
     TechnicalEvaluationSerializer
 )
@@ -1149,14 +1151,358 @@ class RequisitionViewSet(viewsets.ModelViewSet):
 
 
 class QuotationRequestViewSet(viewsets.ModelViewSet):
-    queryset = QuotationRequest.objects.select_related('requisition', 'created_by').prefetch_related('quotations').all()
+    queryset = QuotationRequest.objects.select_related(
+        'requisition', 'created_by', 'cancelled_by', 'requisition__department', 'requisition__assigned_committee_member'
+    ).prefetch_related('items', 'vendor_invitations', 'vendor_invitations__vendor', 'quotations').all()
     serializer_class = QuotationRequestSerializer
     permission_classes = [IsAuthenticated]
     filterset_class = QuotationRequestFilter
-    search_fields = ['rfq_number', 'title', 'terms_and_conditions']
+    search_fields = ['rfq_number', 'title', 'terms_and_conditions', 'requisition__req_number', 'requisition__title']
+    ordering_fields = ['created_at', 'issue_date', 'due_date', 'status', 'rfq_number']
+    ordering = ['-created_at']
 
-    def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+    def get_queryset(self):
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return QuotationRequest.objects.none()
+
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
+        is_committee = 'committee' in role_name
+        is_purchase = 'purchase' in role_name or 'technical' in role_name
+
+        qs = QuotationRequest.objects.select_related(
+            'requisition', 'created_by', 'cancelled_by', 'requisition__department', 'requisition__assigned_committee_member'
+        ).prefetch_related('items', 'vendor_invitations', 'vendor_invitations__vendor', 'quotations')
+
+        # Auto-update status for expired RFQs
+        today = timezone.now().date()
+        expired_qs = qs.filter(
+            status__in=[QuotationRequest.StatusChoices.OPEN, QuotationRequest.StatusChoices.SENT],
+            due_date__lt=today
+        )
+        if expired_qs.exists():
+            expired_qs.update(status=QuotationRequest.StatusChoices.EXPIRED)
+
+        # Scoping permissions
+        if is_committee and not is_admin:
+            # Committee members see RFQs created by them or linked to requisitions assigned to them
+            qs = qs.filter(
+                Q(created_by=user) |
+                Q(requisition__assigned_committee_member=user)
+            )
+        elif not is_admin and not is_purchase:
+            # Department staff or other users only see RFQs for their department's requisitions
+            qs = qs.filter(requisition__requested_by=user)
+
+        return qs.order_by('-created_at')
+
+    def create(self, request, *args, **kwargs):
+        """
+        Create and Send RFQ exclusively for Procurement Committee members and Admins.
+        Enforces validation:
+        1. Role check: Committee member or Admin.
+        2. Requisition check: Must exist, be purchase-ready, and assigned to this member.
+        3. Vendor category matching: Every selected vendor must be active and supply the requested item's category.
+        4. Due date: Must be valid and in the future.
+        5. Duplicate prevention: Checks for duplicate open RFQ.
+        6. Creates RFQ, RFQItem snapshots, and RFQVendorInvitations atomically.
+        7. Transitions Requisition status to RFQ_ISSUED and records AuditLog.
+        """
+        user = request.user
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
+        is_committee = 'committee' in role_name
+
+        if not is_admin and not is_committee:
+            return Response(
+                {'detail': 'Only Procurement Committee members or administrators can issue RFQs.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        data = request.data
+        req_id = data.get('requisition') or data.get('requisition_id')
+        if not req_id:
+            return Response({'requisition': 'Purchase request ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            requisition = Requisition.objects.select_related('department', 'assigned_committee_member').prefetch_related('items').get(id=req_id)
+        except Requisition.DoesNotExist:
+            return Response({'requisition': 'Purchase request not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Ownership / Assignment check
+        if not is_admin and requisition.assigned_committee_member_id and requisition.assigned_committee_member_id != user.id:
+            return Response(
+                {'detail': 'You are only authorized to issue RFQs for purchase requests assigned to your queue.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Eligible status check
+        allowed_statuses = [
+            Requisition.StatusChoices.APPROVED,
+            Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW,
+            Requisition.StatusChoices.RFQ_ISSUED
+        ]
+        if requisition.status not in allowed_statuses:
+            return Response(
+                {'detail': f"Purchase request {requisition.req_number} is in status '{requisition.get_status_display()}' and is not eligible for vendor sourcing."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Title
+        title = data.get('title', '').strip()
+        if not title:
+            title = f"Request for Quotation: {requisition.title}"
+
+        # Due date
+        due_date_str = data.get('due_date')
+        if not due_date_str:
+            return Response({'due_date': 'Quotation submission deadline is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from datetime import datetime
+            if isinstance(due_date_str, str):
+                parsed_due_date = datetime.strptime(due_date_str.strip()[:10], '%Y-%m-%d').date()
+            else:
+                parsed_due_date = due_date_str
+        except Exception:
+            return Response({'due_date': 'Invalid deadline date format. Expected YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if parsed_due_date <= timezone.now().date():
+            return Response({'due_date': 'Quotation submission deadline must be a future date.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Vendor IDs
+        vendor_ids = data.get('vendor_ids', [])
+        if not vendor_ids or not isinstance(vendor_ids, list):
+            return Response({'vendor_ids': 'At least one eligible vendor must be selected.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Collect requisition categories
+        match_categories = set()
+        for it in requisition.items.all():
+            if it.category and it.category.strip():
+                match_categories.add(it.category.strip().lower())
+        if requisition.category and requisition.category.strip():
+            match_categories.add(requisition.category.strip().lower())
+
+        if not match_categories:
+            return Response(
+                {'detail': 'Cannot issue RFQ: This purchase request has no assigned supply category.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Backend vendor validation
+        from vendors.models import Vendor
+        validated_vendors = []
+        for vid in vendor_ids:
+            vendor = Vendor.objects.filter(
+                id=vid,
+                is_active=True,
+                status=Vendor.StatusChoices.ACTIVE
+            ).prefetch_related('supplier_categories', 'application__supplier_categories').first()
+
+            if not vendor:
+                return Response(
+                    {'vendor_ids': f'Vendor ID {vid} is either inactive, unapproved, or does not exist.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Check category matching
+            vendor_cats = set(c.name.strip().lower() for c in vendor.supplier_categories.all() if c.name)
+            if vendor.application:
+                for ac in vendor.application.supplier_categories.all():
+                    if ac.name:
+                        vendor_cats.add(ac.name.strip().lower())
+
+            if not match_categories.intersection(vendor_cats):
+                return Response(
+                    {'vendor_ids': f"Vendor '{vendor.company_name}' does not supply the category for this purchase request and cannot be invited."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            validated_vendors.append(vendor)
+
+        delivery_requirements = data.get('delivery_requirements', '').strip()
+        delivery_location = data.get('delivery_location', '').strip() or (requisition.department.name if requisition.department else 'Hospital Central Stores')
+        terms_and_conditions = data.get('terms_and_conditions', '').strip()
+
+        # Prevent duplicate submissions
+        existing_rfq = QuotationRequest.objects.filter(
+            requisition=requisition,
+            status__in=[QuotationRequest.StatusChoices.OPEN, QuotationRequest.StatusChoices.SENT],
+            title=title
+        ).first()
+        if existing_rfq:
+            return Response(
+                {
+                    'detail': f"An active RFQ '{existing_rfq.rfq_number}' has already been issued with this title for {requisition.req_number}.",
+                    'rfq': QuotationRequestSerializer(existing_rfq, context={'request': request}).data
+                },
+                status=status.HTTP_409_CONFLICT
+            )
+
+        items_input = data.get('items', [])
+
+        with transaction.atomic():
+            rfq = QuotationRequest.objects.create(
+                requisition=requisition,
+                created_by=user,
+                title=title,
+                due_date=parsed_due_date,
+                delivery_requirements=delivery_requirements,
+                delivery_location=delivery_location,
+                estimated_budget=requisition.estimated_budget,
+                terms_and_conditions=terms_and_conditions,
+                status=QuotationRequest.StatusChoices.SENT
+            )
+
+            # Record vendor invitations
+            for v in validated_vendors:
+                RFQVendorInvitation.objects.get_or_create(
+                    quotation_request=rfq,
+                    vendor=v,
+                    defaults={
+                        'invited_by': user,
+                        'status': RFQVendorInvitation.InvitationStatus.INVITED
+                    }
+                )
+
+            # Record items
+            if items_input and isinstance(items_input, list):
+                for item_dict in items_input:
+                    RFQItem.objects.create(
+                        quotation_request=rfq,
+                        item_name=item_dict.get('item_name') or requisition.title,
+                        category=item_dict.get('category') or requisition.category,
+                        quantity=int(item_dict.get('quantity') or 1),
+                        unit_of_measurement=item_dict.get('unit_of_measurement') or 'Piece',
+                        technical_specifications=item_dict.get('technical_specifications') or '',
+                        estimated_unit_price=item_dict.get('estimated_unit_price') or 0.00
+                    )
+            else:
+                req_items = list(requisition.items.all())
+                if req_items:
+                    for it in req_items:
+                        RFQItem.objects.create(
+                            quotation_request=rfq,
+                            requisition_item=it,
+                            item_name=it.item_name,
+                            category=it.category,
+                            quantity=it.quantity,
+                            unit_of_measurement='Piece',
+                            technical_specifications=it.specifications or '',
+                            estimated_unit_price=it.estimated_unit_price or 0.00
+                        )
+                else:
+                    RFQItem.objects.create(
+                        quotation_request=rfq,
+                        item_name=requisition.title,
+                        category=requisition.category,
+                        quantity=1,
+                        unit_of_measurement='Piece',
+                        technical_specifications=requisition.justification or '',
+                        estimated_unit_price=requisition.estimated_budget or 0.00
+                    )
+
+            # Update requisition status to RFQ_ISSUED
+            if requisition.status != Requisition.StatusChoices.RFQ_ISSUED:
+                requisition.status = Requisition.StatusChoices.RFQ_ISSUED
+                requisition.save(update_fields=['status', 'updated_at'])
+
+            # Record AuditLog
+            creator_name = user.get_full_name() or user.username
+            AuditLog.objects.create(
+                user=user,
+                action='RFQ Created and Sent',
+                module='Procurement Committee',
+                description=(
+                    f"Procurement Committee member @{user.username} ({creator_name}) created and issued {rfq.rfq_number} "
+                    f"('{rfq.title}') for purchase request {requisition.req_number}. "
+                    f"Invited {len(validated_vendors)} eligible vendor(s). Deadline: {rfq.due_date}."
+                )
+            )
+
+        serializer = QuotationRequestSerializer(rfq, context={'request': request})
+        return Response({
+            'message': f"RFQ {rfq.rfq_number} created and recorded successfully for {len(validated_vendors)} invited vendor(s).",
+            'rfq': serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='cancel', permission_classes=[IsAuthenticated])
+    def cancel(self, request, pk=None):
+        """
+        Cancel an issued RFQ with a recorded reason.
+        Only accessible to the RFQ creator, assigned committee member, or Admin.
+        """
+        rfq = self.get_object()
+        user = request.user
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
+        is_creator = rfq.created_by_id == user.id
+        is_assigned_committee = rfq.requisition.assigned_committee_member_id == user.id
+
+        if not is_admin and not is_creator and not is_assigned_committee:
+            return Response(
+                {'detail': 'You do not have permission to cancel this RFQ.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if rfq.status == QuotationRequest.StatusChoices.CANCELLED:
+            return Response({'detail': 'This RFQ is already cancelled.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if rfq.status == QuotationRequest.StatusChoices.CLOSED:
+            return Response({'detail': 'This RFQ has already been closed and cannot be cancelled.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reason = request.data.get('reason', '').strip()
+        if not reason:
+            return Response({'reason': 'A recorded cancellation reason is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        rfq.status = QuotationRequest.StatusChoices.CANCELLED
+        rfq.cancellation_reason = reason
+        rfq.cancelled_by = user
+        rfq.cancelled_at = timezone.now()
+        rfq.save(update_fields=['status', 'cancellation_reason', 'cancelled_by', 'cancelled_at', 'updated_at'])
+
+        # AuditLog
+        AuditLog.objects.create(
+            user=user,
+            action='RFQ Cancelled',
+            module='Procurement Committee',
+            description=f"RFQ {rfq.rfq_number} was cancelled by @{user.username}. Reason: {reason}"
+        )
+
+        serializer = QuotationRequestSerializer(rfq, context={'request': request})
+        return Response({
+            'message': f"RFQ {rfq.rfq_number} has been cancelled.",
+            'rfq': serializer.data
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], url_path='summary')
+    def summary(self, request):
+        """
+        Statistics summary for the RFQ Management section.
+        """
+        qs = self.get_queryset()
+        today = timezone.now().date()
+
+        total = qs.count()
+        sent_or_open = qs.filter(
+            status__in=[QuotationRequest.StatusChoices.OPEN, QuotationRequest.StatusChoices.SENT],
+            due_date__gte=today
+        ).count()
+        expired = qs.filter(
+            Q(status=QuotationRequest.StatusChoices.EXPIRED) |
+            Q(status__in=[QuotationRequest.StatusChoices.OPEN, QuotationRequest.StatusChoices.SENT], due_date__lt=today)
+        ).count()
+        cancelled = qs.filter(status=QuotationRequest.StatusChoices.CANCELLED).count()
+        closed = qs.filter(status=QuotationRequest.StatusChoices.CLOSED).count()
+
+        return Response({
+            'total_rfqs': total,
+            'open_rfqs': sent_or_open,
+            'expired_rfqs': expired,
+            'cancelled_rfqs': cancelled,
+            'closed_rfqs': closed
+        }, status=status.HTTP_200_OK)
 
 
 class QuotationViewSet(viewsets.ModelViewSet):

@@ -35,6 +35,7 @@ import PurchaseOfficerRequisitionsPage from './pages/purchaseOfficer/PurchaseOff
 import PurchaseOfficerPlaceholderPage from './pages/purchaseOfficer/PurchaseOfficerPlaceholderPage';
 import ProcurementCommitteeDashboardPage from './pages/committee/ProcurementCommitteeDashboardPage';
 import ProcurementCommitteeReviewsPage from './pages/committee/ProcurementCommitteeReviewsPage';
+import ProcurementCommitteeRFQsPage from './pages/committee/ProcurementCommitteeRFQsPage';
 import ProcurementCommitteeDecisionsPage from './pages/committee/ProcurementCommitteeDecisionsPage';
 import ProcurementCommitteeHistoryPage from './pages/committee/ProcurementCommitteeHistoryPage';
 import ProcurementCommitteeNotificationsPage from './pages/committee/ProcurementCommitteeNotificationsPage';
@@ -120,6 +121,14 @@ function App() {
             element={
               <ProcurementCommitteeProtectedRoute>
                 <ProcurementCommitteeReviewsPage />
+              </ProcurementCommitteeProtectedRoute>
+            }
+          />
+          <Route
+            path="/committee/rfqs"
+            element={
+              <ProcurementCommitteeProtectedRoute>
+                <ProcurementCommitteeRFQsPage />
               </ProcurementCommitteeProtectedRoute>
             }
           />

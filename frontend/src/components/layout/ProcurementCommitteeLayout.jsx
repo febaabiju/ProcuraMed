@@ -16,7 +16,8 @@ import {
   HiX,
   HiRefresh,
   HiShieldCheck,
-  HiUserGroup
+  HiUserGroup,
+  HiDocumentText
 } from 'react-icons/hi';
 
 const ProcurementCommitteeLayout = ({
@@ -48,6 +49,7 @@ const ProcurementCommitteeLayout = ({
   const navItems = [
     { name: 'Dashboard', path: '/committee/dashboard', icon: HiHome },
     { name: 'My Assigned Requests', path: '/committee/reviews', icon: HiClipboardCheck },
+    { name: 'Sent RFQs', path: '/committee/rfqs', icon: HiDocumentText },
     { name: 'Notifications', path: '/committee/notifications', icon: HiBell },
     { name: 'My Profile', path: '/committee/profile', icon: HiUserCircle },
   ];
