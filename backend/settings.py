@@ -16,16 +16,49 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 if load_dotenv:
-    load_dotenv(BASE_DIR / '.env', override=True)
+    load_dotenv(BASE_DIR / '.env', override=False)
 
 
 
 # Quick-start development settings - unsuitable for production
-SECRET_KEY = 'django-insecure-8-8_aozn2ybzcbz^frv_87%nb=zbr(x3v!o*=1i%g+3(1z#jui'
+DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 't')
 
-DEBUG = True
+# Read SECRET_KEY from environment. In production (DEBUG=False), an explicit key is strictly required.
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = 'django-insecure-8-8_aozn2ybzcbz^frv_87%nb=zbr(x3v!o*=1i%g+3(1z#jui'
+    else:
+        raise ValueError("The SECRET_KEY environment variable must be set in production (when DEBUG=False).")
 
-ALLOWED_HOSTS = ['*']
+# Allowed Hosts: read comma-separated list from env, with safe defaults
+allowed_hosts_env = os.getenv('ALLOWED_HOSTS')
+if allowed_hosts_env:
+    ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_env.split(',') if h.strip()]
+else:
+    ALLOWED_HOSTS = ['*'] if DEBUG else []
+
+# Automatically include Render external hostname if provided by Render environment
+render_external_hostname = os.getenv('RENDER_EXTERNAL_HOSTNAME')
+if render_external_hostname and render_external_hostname not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(render_external_hostname)
+
+# Reverse-proxy SSL header and secure cookies for production (Render)
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
+# CSRF Trusted Origins (for Django Admin & session requests on Render / Vercel)
+csrf_trusted_env = os.getenv('CSRF_TRUSTED_ORIGINS')
+if csrf_trusted_env:
+    CSRF_TRUSTED_ORIGINS = [o.strip() for o in csrf_trusted_env.split(',') if o.strip()]
+else:
+    CSRF_TRUSTED_ORIGINS = [
+        'https://procuramed.onrender.com',
+        'https://procuramed.vercel.app',
+    ]
+
 
 
 # Application definition
@@ -52,8 +85,20 @@ INSTALLED_APPS = [
     'dashboard',
 ]
 
+# Check WhiteNoise availability
+try:
+    import whitenoise  # noqa: F401
+    _has_whitenoise = True
+except ImportError:
+    _has_whitenoise = False
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+]
+if _has_whitenoise:
+    MIDDLEWARE.append('whitenoise.middleware.WhiteNoiseMiddleware')
+
+MIDDLEWARE.extend([
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -62,7 +107,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'backend.middleware.NoCacheResponseMiddleware',
-]
+])
 
 ROOT_URLCONF = 'backend.urls'
 
@@ -84,7 +129,20 @@ TEMPLATES = [
 WSGI_APPLICATION = 'backend.wsgi.application'
 
 
-# Database
+# Database (Configured for local PostgreSQL and Supabase PostgreSQL)
+db_sslmode = os.getenv('DB_SSLMODE')
+if not db_sslmode:
+    db_host_check = os.getenv('DB_HOST', 'localhost').lower()
+    # Require SSL in production or when connecting to a remote Supabase / cloud host
+    if not DEBUG or ('localhost' not in db_host_check and '127.0.0.1' not in db_host_check):
+        db_sslmode = 'require'
+    else:
+        db_sslmode = None
+
+db_options = {}
+if db_sslmode:
+    db_options['sslmode'] = db_sslmode
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
@@ -93,6 +151,7 @@ DATABASES = {
         'PASSWORD': os.getenv('DB_PASSWORD', ''),
         'HOST': os.getenv('DB_HOST', 'localhost'),
         'PORT': os.getenv('DB_PORT', '5432'),
+        'OPTIONS': db_options,
     }
 }
 
@@ -120,9 +179,29 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
+
+# Frontend Web Application URL
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000').strip()
+
+# CORS Configuration
 from corsheaders.defaults import default_headers
 
-CORS_ALLOW_ALL_ORIGINS = True
+if DEBUG:
+    # Allow all origins in development for flexible local workflows
+    CORS_ALLOW_ALL_ORIGINS = True
+else:
+    # Restrict origins in production to configured FRONTEND_URL and CORS_ALLOWED_ORIGINS
+    CORS_ALLOW_ALL_ORIGINS = False
+    cors_origins = [
+        'https://procuramed.vercel.app',
+        FRONTEND_URL,
+    ]
+    extra_cors = os.getenv('CORS_ALLOWED_ORIGINS')
+    if extra_cors:
+        cors_origins.extend([o.strip() for o in extra_cors.split(',') if o.strip()])
+    CORS_ALLOWED_ORIGINS = list(dict.fromkeys(cors_origins))
+
+CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = list(default_headers) + [
     'cache-control',
     'pragma',
@@ -136,6 +215,18 @@ STATICFILES_DIRS = [
     BASE_DIR / 'static',
 ]
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# WhiteNoise static files storage with compression and manifest caching
+if _has_whitenoise and not DEBUG:
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        },
+    }
+    WHITENOISE_MANIFEST_STRICT = False
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -184,6 +275,3 @@ SERVER_EMAIL = DEFAULT_FROM_EMAIL
 
 # Password Reset Token Timeout (30 minutes in seconds)
 PASSWORD_RESET_TIMEOUT = 1800
-
-# Frontend Web Application URL
-FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')

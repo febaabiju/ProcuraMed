@@ -86,3 +86,5 @@ Thumbs.db
 .agents/
 .gemini/
 scratch/
+.pytest_cache/
+supabase/.temp/
