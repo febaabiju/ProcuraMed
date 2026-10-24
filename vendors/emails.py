@@ -1,5 +1,10 @@
 import os
 from pathlib import Path
+import json
+import socket
+import urllib.request
+import urllib.error
+import urllib.parse
 import logging
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives, get_connection
@@ -90,6 +95,195 @@ def get_from_email():
         getattr(settings, 'DEFAULT_FROM_EMAIL', 'procuramed2026@gmail.com')
     )
     return str(from_email).strip().strip('\'"')
+
+
+def get_apps_script_config():
+    """
+    Dynamically loads Google Apps Script relay configuration from environment variables,
+    settings, or local .env.
+    Returns (script_url, script_token).
+    """
+    env_file = Path(settings.BASE_DIR) / '.env'
+    env_vars = {}
+    if env_file.exists() and dotenv_values:
+        try:
+            env_vars = dotenv_values(env_file)
+        except Exception:
+            env_vars = {}
+
+    script_url = (
+        os.environ.get('GOOGLE_APPS_SCRIPT_URL') or
+        env_vars.get('GOOGLE_APPS_SCRIPT_URL') or
+        getattr(settings, 'GOOGLE_APPS_SCRIPT_URL', '')
+    )
+    if script_url:
+        script_url = str(script_url).strip().strip('\'"')
+
+    script_token = (
+        os.environ.get('GOOGLE_APPS_SCRIPT_TOKEN') or
+        env_vars.get('GOOGLE_APPS_SCRIPT_TOKEN') or
+        getattr(settings, 'GOOGLE_APPS_SCRIPT_TOKEN', '')
+    )
+    if script_token:
+        script_token = str(script_token).strip().strip('\'"')
+
+    return script_url or None, script_token or None
+
+
+def send_email_via_apps_script(to_email, subject, text_content, html_content, script_url=None, script_token=None, timeout=15):
+    """
+    Sends an email over HTTPS via a deployed Google Apps Script Web App relay.
+    Bypasses blocked outbound SMTP ports (25, 465, 587) on hosting platforms like Render Free.
+    Uses exact payload keys expected by Apps Script: token, to, subject, textBody, and htmlBody.
+    Handles Google Apps Script 302 / ContentService redirect behavior and timeouts safely.
+    Never logs passwords, tokens, email bodies, or the shared secret.
+    """
+    if not script_url or not script_token:
+        cfg_url, cfg_token = get_apps_script_config()
+        script_url = script_url or cfg_url
+        script_token = script_token or cfg_token
+
+    if not script_url and not script_token:
+        return False, "Google Apps Script relay is not configured."
+
+    if not script_url:
+        return False, "Google Apps Script URL is not configured (GOOGLE_APPS_SCRIPT_URL is empty)."
+
+    if not script_token:
+        return False, "Google Apps Script shared secret token is not configured (GOOGLE_APPS_SCRIPT_TOKEN is empty)."
+
+    if not script_url.lower().startswith('https://'):
+        return False, "Google Apps Script URL must use HTTPS protocol."
+
+    if not to_email:
+        return False, "Recipient email address is required."
+
+    payload = {
+        'token': script_token,
+        'to': to_email,
+        'subject': subject,
+        'textBody': text_content,
+        'htmlBody': html_content,
+    }
+
+    try:
+        data = json.dumps(payload).encode('utf-8')
+    except (TypeError, ValueError) as json_err:
+        logger.error(f"Failed to serialize email payload to JSON: {json_err}")
+        return False, "Failed to encode email payload for relay."
+
+    req = urllib.request.Request(
+        url=script_url,
+        data=data,
+        headers={
+            'Content-Type': 'application/json; charset=utf-8',
+            'User-Agent': 'ProcuraMed-Backend/1.0',
+            'Accept': 'application/json',
+        },
+        method='POST'
+    )
+
+    try:
+        # urllib.request.urlopen automatically follows 301, 302, 303 redirects from POST by issuing a GET to the Location header.
+        # Google Apps Script ContentService returns HTTP 302 Found pointing to script.googleusercontent.com/macros/echo?...
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            status_code = getattr(response, 'status', None) or response.getcode()
+
+            # Handle case where redirect status was not automatically followed
+            if status_code in (301, 302, 303, 307, 308):
+                redirect_url = response.headers.get('Location') or response.headers.get('location')
+                if redirect_url:
+                    redirect_url = urllib.parse.urljoin(script_url, redirect_url)
+                    redir_req = urllib.request.Request(
+                        redirect_url,
+                        headers={
+                            'User-Agent': 'ProcuraMed-Backend/1.0',
+                            'Accept': 'application/json',
+                        },
+                        method='GET'
+                    )
+                    with urllib.request.urlopen(redir_req, timeout=timeout) as redir_resp:
+                        response_body = redir_resp.read().decode('utf-8', errors='replace')
+                else:
+                    response_body = response.read().decode('utf-8', errors='replace')
+            else:
+                response_body = response.read().decode('utf-8', errors='replace')
+
+    except urllib.error.HTTPError as http_err:
+        # If urllib raised HTTPError on redirect (e.g. 307/308 or redirect limit)
+        if http_err.code in (301, 302, 303, 307, 308):
+            redirect_url = http_err.headers.get('Location') or http_err.headers.get('location')
+            if redirect_url:
+                try:
+                    redirect_url = urllib.parse.urljoin(script_url, redirect_url)
+                    redir_req = urllib.request.Request(
+                        redirect_url,
+                        headers={
+                            'User-Agent': 'ProcuraMed-Backend/1.0',
+                            'Accept': 'application/json',
+                        },
+                        method='GET'
+                    )
+                    with urllib.request.urlopen(redir_req, timeout=timeout) as redir_resp:
+                        response_body = redir_resp.read().decode('utf-8', errors='replace')
+                except Exception as redir_err:
+                    logger.error(f"Failed to follow Google Apps Script redirect: {redir_err}")
+                    return False, f"Failed to follow Google Apps Script redirect: {redir_err}"
+            else:
+                logger.error(f"Google Apps Script returned redirect HTTP {http_err.code} without Location header")
+                return False, f"Google Apps Script returned HTTP {http_err.code} without Location header."
+        else:
+            logger.error(f"Google Apps Script relay returned HTTP error {http_err.code}")
+            try:
+                err_body = http_err.read().decode('utf-8', errors='replace')
+                err_json = json.loads(err_body)
+                detail = err_json.get('error') or err_json.get('message')
+                if detail:
+                    return False, f"Google Apps Script relay error: {detail}"
+            except Exception:
+                pass
+            return False, f"Google Apps Script relay failed with HTTP {http_err.code}."
+
+    except (socket.timeout, TimeoutError) as to_err:
+        logger.error(f"Timeout while connecting to Google Apps Script relay: {to_err}")
+        return False, "Google Apps Script email relay timed out. Please try again."
+
+    except urllib.error.URLError as url_err:
+        if isinstance(url_err.reason, (socket.timeout, TimeoutError)):
+            logger.error(f"Timeout while connecting to Google Apps Script relay: {url_err}")
+            return False, "Google Apps Script email relay timed out. Please try again."
+        logger.error(f"Network error connecting to Google Apps Script relay: {url_err.reason}")
+        return False, f"Failed to connect to Google Apps Script relay: {url_err.reason}"
+
+    except Exception as exc:
+        logger.error(f"Unexpected error in Google Apps Script relay: {exc}")
+        return False, f"Failed to send email via Google Apps Script relay: {str(exc)}"
+
+    # Parse and validate JSON response from relay
+    try:
+        res_data = json.loads(response_body)
+    except (json.JSONDecodeError, ValueError) as json_err:
+        logger.error(f"Invalid JSON received from Google Apps Script relay: {json_err}")
+        return False, "Invalid response received from Google Apps Script relay."
+
+    if not isinstance(res_data, dict):
+        logger.error("Non-dictionary JSON response from Google Apps Script relay")
+        return False, "Invalid JSON structure received from Google Apps Script relay."
+
+    # Check for success indicators
+    is_success = (
+        res_data.get('success') is True or
+        str(res_data.get('status')).lower() == 'success' or
+        str(res_data.get('result')).lower() == 'success'
+    )
+
+    if is_success:
+        logger.info(f"Password reset email delivered to {to_email} via Google Apps Script relay.")
+        return True, "Password reset email sent successfully"
+
+    error_msg = res_data.get('error') or res_data.get('message') or "Email delivery failed at relay"
+    logger.error(f"Google Apps Script relay reported error: {error_msg}")
+    return False, f"Google Apps Script relay error: {error_msg}"
 
 
 
@@ -398,6 +592,10 @@ def send_password_reset_email(user, reset_url, expires_in_minutes=30, vendor=Non
     to the user's registered email address for any supported ProcuraMed role.
     """
     recipient_email = user.email
+    if not recipient_email:
+        logger.warning(f"Cannot send password reset email: user '{user.username}' has no email configured.")
+        return False, "User has no email address configured."
+
     role_name = user.role.name if user.role else "User"
     portal_name = f"{role_name} Portal" if "portal" not in role_name.lower() else role_name
 
@@ -521,6 +719,21 @@ Website: {frontend_url}
 </html>
 """
 
+    # 1. Primary path: Use Google Apps Script HTTPS relay when configured (required for Render Free hosting)
+    gas_url, gas_token = get_apps_script_config()
+    if gas_url or gas_token:
+        # When relay variables are configured, production must use the relay instead of SMTP.
+        # Do not silently fall back to blocked SMTP after a configured relay fails.
+        return send_email_via_apps_script(
+            to_email=recipient_email,
+            subject=subject,
+            text_content=text_content,
+            html_content=html_content,
+            script_url=gas_url,
+            script_token=gas_token,
+        )
+
+    # 2. Fallback path: Standard SMTP connection for local development when relay is unconfigured
     connection, conn_err = get_smtp_connection()
     if not connection:
         logger.error(f"Cannot send password reset email to {recipient_email}: {conn_err}")

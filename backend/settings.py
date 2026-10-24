@@ -287,3 +287,7 @@ SERVER_EMAIL = DEFAULT_FROM_EMAIL
 
 # Password Reset Token Timeout (30 minutes in seconds)
 PASSWORD_RESET_TIMEOUT = 1800
+
+# Google Apps Script Email Relay (HTTPS for Render Free Hosting)
+GOOGLE_APPS_SCRIPT_URL = os.environ.get('GOOGLE_APPS_SCRIPT_URL', '').strip().strip('\'"')
+GOOGLE_APPS_SCRIPT_TOKEN = os.environ.get('GOOGLE_APPS_SCRIPT_TOKEN', '').strip().strip('\'"')

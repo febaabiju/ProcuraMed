@@ -324,3 +324,236 @@ class PasswordResetWorkflowTests(SimpleTestCase):
         resp_garbage = ResetPasswordValidateView.as_view()(req_garbage)
         self.assertEqual(resp_garbage.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(resp_garbage.data.get('valid'))
+
+    def test_12_apps_script_relay_successful_delivery(self):
+        """Test 12: Successful password-reset email delivery via Google Apps Script HTTPS relay."""
+        import json
+        from vendors.emails import send_password_reset_email
+
+        mock_resp = MagicMock()
+        mock_resp.getcode.return_value = 200
+        mock_resp.read.return_value = json.dumps({'success': True}).encode('utf-8')
+        mock_resp.__enter__.return_value = mock_resp
+        mock_resp.__exit__.return_value = None
+
+        with patch.dict(os.environ, {
+            'GOOGLE_APPS_SCRIPT_URL': 'https://script.google.com/macros/s/test_id/exec',
+            'GOOGLE_APPS_SCRIPT_TOKEN': 'super_secret_shared_token_2026'
+        }), patch('urllib.request.urlopen', return_value=mock_resp) as mock_urlopen:
+
+            success, msg = send_password_reset_email(
+                user=self.user,
+                reset_url='https://procuramed.vercel.app/reset-password?uid=MQ&token=test-token-xyz'
+            )
+
+            self.assertTrue(success)
+            self.assertEqual(msg, 'Password reset email sent successfully')
+            mock_urlopen.assert_called_once()
+
+            # Verify request properties
+            call_req = mock_urlopen.call_args[0][0]
+            self.assertEqual(call_req.full_url, 'https://script.google.com/macros/s/test_id/exec')
+            self.assertEqual(call_req.get_method(), 'POST')
+            self.assertEqual(call_req.headers.get('Content-type'), 'application/json; charset=utf-8')
+
+            # Verify exact payload keys: token, to, subject, textBody, htmlBody
+            sent_payload = json.loads(call_req.data.decode('utf-8'))
+            self.assertEqual(sent_payload['token'], 'super_secret_shared_token_2026')
+            self.assertEqual(sent_payload['to'], 'febabiju10973@gmail.com')
+            self.assertIn('Password Reset Request', sent_payload['subject'])
+            self.assertIn('https://procuramed.vercel.app/reset-password?uid=MQ&token=test-token-xyz', sent_payload['textBody'])
+            self.assertIn('https://procuramed.vercel.app/reset-password?uid=MQ&token=test-token-xyz', sent_payload['htmlBody'])
+
+    def test_13_apps_script_relay_missing_configuration_safeguards(self):
+        """Test 13: Partial or invalid configuration fails safely without attempting delivery."""
+        from vendors.emails import send_password_reset_email
+
+        # 13a. Missing token
+        with patch.dict(os.environ, {
+            'GOOGLE_APPS_SCRIPT_URL': 'https://script.google.com/macros/s/test_id/exec',
+            'GOOGLE_APPS_SCRIPT_TOKEN': ''
+        }, clear=True):
+            success, msg = send_password_reset_email(user=self.user, reset_url='https://example.com')
+            self.assertFalse(success)
+            self.assertIn('shared secret token is not configured', msg)
+
+        # 13b. Missing URL
+        with patch.dict(os.environ, {
+            'GOOGLE_APPS_SCRIPT_URL': '',
+            'GOOGLE_APPS_SCRIPT_TOKEN': 'secret_token_123'
+        }, clear=True):
+            success, msg = send_password_reset_email(user=self.user, reset_url='https://example.com')
+            self.assertFalse(success)
+            self.assertIn('URL is not configured', msg)
+
+        # 13c. Non-HTTPS URL rejected
+        with patch.dict(os.environ, {
+            'GOOGLE_APPS_SCRIPT_URL': 'http://script.google.com/insecure/exec',
+            'GOOGLE_APPS_SCRIPT_TOKEN': 'secret_token_123'
+        }, clear=True):
+            success, msg = send_password_reset_email(user=self.user, reset_url='https://example.com')
+            self.assertFalse(success)
+            self.assertIn('must use HTTPS protocol', msg)
+
+    def test_14_apps_script_relay_content_service_redirect_handling(self):
+        """Test 14: Google Apps Script 302 ContentService redirect is followed safely via GET."""
+        import json
+        import urllib.error
+        from vendors.emails import send_password_reset_email
+
+        # Mock initial redirect response (HTTP 302 Found)
+        redir_err = urllib.error.HTTPError(
+            url='https://script.google.com/macros/s/test_id/exec',
+            code=302,
+            msg='Found',
+            hdrs={'Location': 'https://script.googleusercontent.com/macros/echo?user_content_key=xyz'},
+            fp=None
+        )
+
+        # Mock final response from redirected echo endpoint
+        final_resp = MagicMock()
+        final_resp.getcode.return_value = 200
+        final_resp.read.return_value = json.dumps({'success': True}).encode('utf-8')
+        final_resp.__enter__.return_value = final_resp
+        final_resp.__exit__.return_value = None
+
+        def mock_urlopen_side_effect(req, *args, **kwargs):
+            if hasattr(req, 'full_url') and 'script.google.com' in req.full_url:
+                raise redir_err
+            return final_resp
+
+        with patch.dict(os.environ, {
+            'GOOGLE_APPS_SCRIPT_URL': 'https://script.google.com/macros/s/test_id/exec',
+            'GOOGLE_APPS_SCRIPT_TOKEN': 'valid_token'
+        }), patch('urllib.request.urlopen', side_effect=mock_urlopen_side_effect) as mock_urlopen:
+
+            success, msg = send_password_reset_email(
+                user=self.user,
+                reset_url='https://procuramed.vercel.app/reset-password'
+            )
+
+            self.assertTrue(success)
+            self.assertEqual(msg, 'Password reset email sent successfully')
+            self.assertEqual(mock_urlopen.call_count, 2)
+            # Second call was GET to redirect URL
+            second_call_req = mock_urlopen.call_args_list[1][0][0]
+            self.assertEqual(second_call_req.full_url, 'https://script.googleusercontent.com/macros/echo?user_content_key=xyz')
+            self.assertEqual(second_call_req.get_method(), 'GET')
+
+    def test_15_apps_script_relay_unsuccessful_response_handling(self):
+        """Test 15: Apps Script application error (e.g. Unauthorized token) returns failure message without falling back to SMTP."""
+        import json
+        from vendors.emails import send_password_reset_email
+
+        mock_resp = MagicMock()
+        mock_resp.getcode.return_value = 200
+        mock_resp.read.return_value = json.dumps({'success': False, 'error': 'Unauthorized: invalid token'}).encode('utf-8')
+        mock_resp.__enter__.return_value = mock_resp
+        mock_resp.__exit__.return_value = None
+
+        with patch.dict(os.environ, {
+            'GOOGLE_APPS_SCRIPT_URL': 'https://script.google.com/macros/s/test_id/exec',
+            'GOOGLE_APPS_SCRIPT_TOKEN': 'wrong_token'
+        }), patch('urllib.request.urlopen', return_value=mock_resp), \
+           patch('vendors.emails.get_smtp_connection') as mock_smtp:
+
+            success, msg = send_password_reset_email(
+                user=self.user,
+                reset_url='https://procuramed.vercel.app/reset-password'
+            )
+
+            self.assertFalse(success)
+            self.assertIn('Unauthorized: invalid token', msg)
+            # Confirm NO silent fallback to SMTP occurred
+            mock_smtp.assert_not_called()
+
+    def test_16_apps_script_relay_invalid_json_handling(self):
+        """Test 16: Non-JSON / malformed response from relay returns clean error without crashing."""
+        from vendors.emails import send_password_reset_email
+
+        mock_resp = MagicMock()
+        mock_resp.getcode.return_value = 200
+        mock_resp.read.return_value = b'<html><body>502 Bad Gateway</body></html>'
+        mock_resp.__enter__.return_value = mock_resp
+        mock_resp.__exit__.return_value = None
+
+        with patch.dict(os.environ, {
+            'GOOGLE_APPS_SCRIPT_URL': 'https://script.google.com/macros/s/test_id/exec',
+            'GOOGLE_APPS_SCRIPT_TOKEN': 'valid_token'
+        }), patch('urllib.request.urlopen', return_value=mock_resp):
+
+            success, msg = send_password_reset_email(
+                user=self.user,
+                reset_url='https://procuramed.vercel.app/reset-password'
+            )
+
+            self.assertFalse(success)
+            self.assertIn('Invalid response received from Google Apps Script relay', msg)
+
+    def test_17_apps_script_relay_http_error_handling(self):
+        """Test 17: HTTP error from relay (e.g. 500) returns clean failure message."""
+        import urllib.error
+        from io import BytesIO
+        from vendors.emails import send_password_reset_email
+
+        http_err = urllib.error.HTTPError(
+            url='https://script.google.com/macros/s/test_id/exec',
+            code=500,
+            msg='Internal Server Error',
+            hdrs={},
+            fp=BytesIO(b'{"error": "Internal Google Script Error"}')
+        )
+
+        with patch.dict(os.environ, {
+            'GOOGLE_APPS_SCRIPT_URL': 'https://script.google.com/macros/s/test_id/exec',
+            'GOOGLE_APPS_SCRIPT_TOKEN': 'valid_token'
+        }), patch('urllib.request.urlopen', side_effect=http_err):
+
+            success, msg = send_password_reset_email(
+                user=self.user,
+                reset_url='https://procuramed.vercel.app/reset-password'
+            )
+
+            self.assertFalse(success)
+            self.assertIn('Google Apps Script relay error: Internal Google Script Error', msg)
+
+    def test_18_apps_script_relay_timeout_handling(self):
+        """Test 18: Network timeout returns user-friendly timeout error without hanging."""
+        import socket
+        import urllib.error
+        from vendors.emails import send_password_reset_email
+
+        timeout_err = urllib.error.URLError(reason=socket.timeout('timed out'))
+
+        with patch.dict(os.environ, {
+            'GOOGLE_APPS_SCRIPT_URL': 'https://script.google.com/macros/s/test_id/exec',
+            'GOOGLE_APPS_SCRIPT_TOKEN': 'valid_token'
+        }), patch('urllib.request.urlopen', side_effect=timeout_err):
+
+            success, msg = send_password_reset_email(
+                user=self.user,
+                reset_url='https://procuramed.vercel.app/reset-password'
+            )
+
+            self.assertFalse(success)
+            self.assertIn('timed out', msg.lower())
+
+    def test_19_apps_script_relay_fallback_to_smtp_when_unconfigured(self):
+        """Test 19: When Google Apps Script variables are absent, send_password_reset_email falls back to SMTP."""
+        from vendors.emails import send_password_reset_email
+
+        with patch.dict(os.environ, {
+            'GOOGLE_APPS_SCRIPT_URL': '',
+            'GOOGLE_APPS_SCRIPT_TOKEN': ''
+        }, clear=True), \
+        patch('vendors.emails.get_smtp_connection', return_value=(None, 'SMTP connection refused for testing')) as mock_smtp:
+
+            success, msg = send_password_reset_email(
+                user=self.user,
+                reset_url='https://procuramed.vercel.app/reset-password'
+            )
+
+            self.assertFalse(success)
+            self.assertEqual(msg, 'SMTP connection refused for testing')
+            mock_smtp.assert_called_once()
+
