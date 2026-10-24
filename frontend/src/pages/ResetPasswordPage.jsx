@@ -62,10 +62,16 @@ const ResetPasswordPage = () => {
         }
       } catch (err) {
         setTokenValid(false);
-        setValidationError(
-          err.response?.data?.error ||
-          'This password reset link is invalid or has expired. Please request a new one.'
-        );
+        const data = err.response?.data;
+        let errMsg = 'This password reset link is invalid or has expired. Please request a new one.';
+        if (err.response?.status >= 500) {
+          errMsg = 'The server encountered an error while validating this reset link. Please try again later or request a new one.';
+        } else if (typeof data?.error === 'string') {
+          errMsg = data.error;
+        } else if (typeof data?.detail === 'string') {
+          errMsg = data.detail;
+        }
+        setValidationError(errMsg);
       } finally {
         setValidating(false);
       }
@@ -138,13 +144,15 @@ const ResetPasswordPage = () => {
     } catch (err) {
       const data = err.response?.data;
       let errMsg = 'Failed to reset password. The link may have expired or been used already.';
-      if (typeof data?.error === 'string') {
+      if (err.response?.status >= 500) {
+        errMsg = 'A server error occurred while updating your password. Please try again later or contact support.';
+      } else if (typeof data?.error === 'string') {
         errMsg = data.error;
       } else if (typeof data?.message === 'string') {
         errMsg = data.message;
       } else if (typeof data?.detail === 'string') {
         errMsg = data.detail;
-      } else if (typeof data === 'string') {
+      } else if (typeof data === 'string' && !data.includes('<html') && !data.includes('<!DOCTYPE')) {
         errMsg = data;
       } else if (data && typeof data === 'object') {
         const values = Object.values(data).flat();

@@ -36,12 +36,15 @@ allowed_hosts_env = os.getenv('ALLOWED_HOSTS')
 if allowed_hosts_env:
     ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_env.split(',') if h.strip()]
 else:
-    ALLOWED_HOSTS = ['*'] if DEBUG else []
+    ALLOWED_HOSTS = ['*'] if DEBUG else ['procuramed.onrender.com']
 
 # Automatically include Render external hostname if provided by Render environment
 render_external_hostname = os.getenv('RENDER_EXTERNAL_HOSTNAME')
 if render_external_hostname and render_external_hostname not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(render_external_hostname)
+
+if not DEBUG and 'procuramed.onrender.com' not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append('procuramed.onrender.com')
 
 # Reverse-proxy SSL header and secure cookies for production (Render)
 if not DEBUG:
@@ -181,7 +184,11 @@ USE_TZ = True
 
 
 # Frontend Web Application URL
-FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000').strip()
+raw_frontend_url = os.environ.get('FRONTEND_URL', '').strip()
+if raw_frontend_url:
+    FRONTEND_URL = raw_frontend_url.rstrip('/')
+else:
+    FRONTEND_URL = 'http://localhost:3000' if DEBUG else 'https://procuramed.vercel.app'
 
 # CORS Configuration
 from corsheaders.defaults import default_headers
@@ -260,9 +267,12 @@ SIMPLE_JWT = {
 # Email Configuration (Gmail SMTP)
 EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
 EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com').strip()
-EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
-EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True').lower() in ('true', '1', 't')
-EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'False').lower() in ('true', '1', 't')
+try:
+    EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
+except (ValueError, TypeError):
+    EMAIL_PORT = 587
+EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True').lower() in ('true', '1', 't', 'yes')
+EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'False').lower() in ('true', '1', 't', 'yes')
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', 'procuramed2026@gmail.com').strip().strip('\'"')
 
 _raw_email_password = os.environ.get('EMAIL_HOST_PASSWORD', '')
@@ -270,7 +280,9 @@ if '#' in _raw_email_password:
     _raw_email_password = _raw_email_password.split('#')[0]
 EMAIL_HOST_PASSWORD = _raw_email_password.strip().strip('\'"').replace(' ', '')
 
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'procuramed2026@gmail.com').strip().strip('\'"')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER).strip().strip('\'"')
+if not DEFAULT_FROM_EMAIL:
+    DEFAULT_FROM_EMAIL = EMAIL_HOST_USER or 'procuramed2026@gmail.com'
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
 
 # Password Reset Token Timeout (30 minutes in seconds)

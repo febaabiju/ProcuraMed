@@ -174,10 +174,20 @@ const LoginPage = () => {
         `A secure password reset link has been sent to your registered email address. Please check your inbox.`
       );
     } catch (err) {
-      const errMsg =
-        err.response?.data?.error ||
-        err.response?.data?.message ||
-        'Failed to process password reset. Please check your credentials and try again.';
+      let errMsg = 'Failed to process password reset. Please try again.';
+      if (err.response?.data?.error) {
+        errMsg = err.response.data.error;
+      } else if (err.response?.data?.message) {
+        errMsg = err.response.data.message;
+      } else if (err.response?.data?.detail) {
+        errMsg = err.response.data.detail;
+      } else if (err.response?.status >= 500) {
+        errMsg = 'The server encountered an error while processing the email delivery. Please contact support or try again later.';
+      } else if (!err.response) {
+        errMsg = 'Unable to reach the server. Please check your network connection.';
+      } else {
+        errMsg = 'Failed to process password reset. Please check your credentials and try again.';
+      }
       setForgotError(errMsg);
     } finally {
       setForgotLoading(false);

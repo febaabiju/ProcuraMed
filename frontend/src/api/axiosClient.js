@@ -12,11 +12,21 @@ const axiosClient = axios.create({
   },
 });
 
+const isPublicAuthUrl = (url) => {
+  if (!url) return false;
+  return (
+    url.includes('/accounts/login/') ||
+    url.includes('/accounts/token/refresh/') ||
+    url.includes('/accounts/forgot-password/') ||
+    url.includes('/accounts/reset-password/')
+  );
+};
+
 // Request Interceptor: Attach JWT Token from Session Storage & anti-cache headers
 axiosClient.interceptors.request.use(
   (config) => {
     const token = sessionStorage.getItem('access_token');
-    if (token) {
+    if (token && !isPublicAuthUrl(config.url)) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     config.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
@@ -32,8 +42,8 @@ axiosClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
-    const isAuthUrl = originalRequest?.url?.includes('/accounts/login/') || originalRequest?.url?.includes('/accounts/token/refresh/');
-    if (error.response?.status === 401 && !originalRequest._retry && !isAuthUrl) {
+    const isPublic = isPublicAuthUrl(originalRequest?.url);
+    if (error.response?.status === 401 && !originalRequest._retry && !isPublic) {
       originalRequest._retry = true;
       try {
         const refreshToken = sessionStorage.getItem('refresh_token');

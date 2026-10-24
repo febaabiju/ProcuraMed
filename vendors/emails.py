@@ -14,21 +14,36 @@ logger = logging.getLogger(__name__)
 
 def get_smtp_connection():
     """
-    Creates an email connection with credentials dynamically loaded from .env.
-    This guarantees that the latest EMAIL_HOST_PASSWORD from .env is used
-    without requiring a dev server restart, and handles trailing spaces/quotes.
+    Creates an email connection with credentials dynamically loaded from environment
+    variables and settings, falling back to local .env if present.
+    Ensures quotes, trailing comments, and spaces in EMAIL_HOST_PASSWORD are sanitized.
     """
     env_file = Path(settings.BASE_DIR) / '.env'
     env_vars = {}
     if env_file.exists() and dotenv_values:
-        env_vars = dotenv_values(env_file)
+        try:
+            env_vars = dotenv_values(env_file)
+        except Exception:
+            env_vars = {}
 
-    host = env_vars.get('EMAIL_HOST') or os.environ.get('EMAIL_HOST') or getattr(settings, 'EMAIL_HOST', 'smtp.gmail.com')
-    port = int(env_vars.get('EMAIL_PORT') or os.environ.get('EMAIL_PORT') or getattr(settings, 'EMAIL_PORT', 587))
-    use_tls = str(env_vars.get('EMAIL_USE_TLS') or os.environ.get('EMAIL_USE_TLS') or getattr(settings, 'EMAIL_USE_TLS', 'True')).lower() in ('true', '1', 't')
-    use_ssl = str(env_vars.get('EMAIL_USE_SSL') or os.environ.get('EMAIL_USE_SSL') or getattr(settings, 'EMAIL_USE_SSL', 'False')).lower() in ('true', '1', 't')
-    username = env_vars.get('EMAIL_HOST_USER') or os.environ.get('EMAIL_HOST_USER') or getattr(settings, 'EMAIL_HOST_USER', 'procuramed2026@gmail.com')
-    password = env_vars.get('EMAIL_HOST_PASSWORD') or os.environ.get('EMAIL_HOST_PASSWORD') or getattr(settings, 'EMAIL_HOST_PASSWORD', '')
+    host = os.environ.get('EMAIL_HOST') or env_vars.get('EMAIL_HOST') or getattr(settings, 'EMAIL_HOST', 'smtp.gmail.com')
+    raw_port = os.environ.get('EMAIL_PORT') or env_vars.get('EMAIL_PORT') or getattr(settings, 'EMAIL_PORT', 587)
+    try:
+        port = int(str(raw_port).strip())
+    except (ValueError, TypeError):
+        port = 587
+
+    raw_tls = os.environ.get('EMAIL_USE_TLS') or env_vars.get('EMAIL_USE_TLS') or getattr(settings, 'EMAIL_USE_TLS', 'True')
+    use_tls = str(raw_tls).lower() in ('true', '1', 't', 'yes')
+
+    raw_ssl = os.environ.get('EMAIL_USE_SSL') or env_vars.get('EMAIL_USE_SSL') or getattr(settings, 'EMAIL_USE_SSL', 'False')
+    use_ssl = str(raw_ssl).lower() in ('true', '1', 't', 'yes')
+
+    username = os.environ.get('EMAIL_HOST_USER') or env_vars.get('EMAIL_HOST_USER') or getattr(settings, 'EMAIL_HOST_USER', 'procuramed2026@gmail.com')
+    if username:
+        username = username.strip().strip('\'"')
+
+    password = os.environ.get('EMAIL_HOST_PASSWORD') or env_vars.get('EMAIL_HOST_PASSWORD') or getattr(settings, 'EMAIL_HOST_PASSWORD', '')
 
     if password:
         if '#' in password:
@@ -36,11 +51,12 @@ def get_smtp_connection():
         password = password.strip().strip('\'"').replace(' ', '')
 
     if not password:
-        return None, "Gmail App Password is not configured in .env (EMAIL_HOST_PASSWORD is empty). Please set your 16-character Gmail App Password in .env."
+        return None, "Email password is not configured (EMAIL_HOST_PASSWORD is empty). Please set your 16-character Gmail App Password in environment variables."
 
     try:
+        backend_cls = getattr(settings, 'EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
         connection = get_connection(
-            backend=getattr(settings, 'EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend'),
+            backend=backend_cls,
             host=host,
             port=port,
             username=username,
@@ -51,16 +67,29 @@ def get_smtp_connection():
         )
         return connection, None
     except Exception as exc:
-        return None, str(exc)
+        return None, f"Failed to initialize email connection: {exc}"
 
 
 def get_from_email():
     """
-    Dynamically loads the default from-email from .env or django settings.
+    Dynamically loads the default from-email from environment, settings, or .env.
     """
     env_file = Path(settings.BASE_DIR) / '.env'
-    env_vars = dotenv_values(env_file) if (env_file.exists() and dotenv_values) else {}
-    return env_vars.get('DEFAULT_FROM_EMAIL') or env_vars.get('EMAIL_HOST_USER') or getattr(settings, 'DEFAULT_FROM_EMAIL', 'procuramed2026@gmail.com')
+    env_vars = {}
+    if env_file.exists() and dotenv_values:
+        try:
+            env_vars = dotenv_values(env_file)
+        except Exception:
+            env_vars = {}
+
+    from_email = (
+        os.environ.get('DEFAULT_FROM_EMAIL') or
+        env_vars.get('DEFAULT_FROM_EMAIL') or
+        os.environ.get('EMAIL_HOST_USER') or
+        env_vars.get('EMAIL_HOST_USER') or
+        getattr(settings, 'DEFAULT_FROM_EMAIL', 'procuramed2026@gmail.com')
+    )
+    return str(from_email).strip().strip('\'"')
 
 
 
@@ -383,6 +412,8 @@ def send_password_reset_email(user, reset_url, expires_in_minutes=30, vendor=Non
         subject = f"ProcuraMed - Password Reset Request ({role_name})"
         account_desc = f"{role_name} account"
 
+    frontend_url = getattr(settings, 'FRONTEND_URL', 'https://procuramed.vercel.app').rstrip('/')
+
     text_content = f"""Dear {contact_person},
 
 We received a request to reset the password for your ProcuraMed {account_desc} (@{user.username}).
@@ -401,7 +432,7 @@ If you require further assistance, please contact the System Administrator at {f
 Best regards,
 ProcuraMed Hospital Procurement Administration
 Email: {from_email}
-Website: http://localhost:3000
+Website: {frontend_url}
 """
 
     html_content = f"""<!DOCTYPE html>
@@ -511,7 +542,7 @@ Website: http://localhost:3000
         logger.error(f"Failed to send password reset email to {recipient_email}: {str(exc)}", exc_info=True)
         err_str = str(exc)
         if "535" in err_str or "Authentication" in err_str or "Username and Password not accepted" in err_str:
-            err_str = "Gmail SMTP authentication failed. Please verify the 16-character Google App Password in .env."
+            err_str = "Gmail SMTP authentication failed. Please verify the 16-character Google App Password in EMAIL_HOST_PASSWORD environment variable."
         return False, err_str
 
 

@@ -1,7 +1,10 @@
+import logging
 from rest_framework import viewsets, status, views
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
+
+logger = logging.getLogger(__name__)
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -156,228 +159,281 @@ from vendors.emails import send_password_reset_email
 
 
 class ForgotPasswordView(APIView):
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
-        username = request.data.get('username', '').strip()
-        email = request.data.get('email', '').strip()
+        try:
+            username = request.data.get('username', '').strip()
+            email = request.data.get('email', '').strip()
 
-        if not username or not email:
-            return Response(
-                {'error': 'Please enter both your username and registered email address.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Look up active user matching both username and email
-        user = User.objects.select_related('role').filter(
-            username__iexact=username, email__iexact=email, is_active=True
-        ).first()
-
-        if not user:
-            return Response(
-                {'error': 'No active account was found matching the provided username and email address.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Admin accounts MUST NOT have access to Forgot Password
-        role_name = user.role.name.lower() if user.role else ''
-        is_admin = bool(
-            user.is_superuser or 
-            user.is_staff or 
-            role_name in ['admin', 'system administrator']
-        )
-        if is_admin:
-            return Response(
-                {'error': 'Password reset is not available for Administrator accounts. Please contact system security or server administration.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        # Verify the user belongs to one of the supported non-admin roles:
-        # Vendor, Department Staff, Purchase Officer, Procurement Committee, Technical Officer
-        is_vendor = 'vendor' in role_name
-        is_department_staff = 'staff' in role_name or 'department' in role_name
-        is_purchase_officer = 'purchase' in role_name or 'procurement officer' in role_name
-        is_committee = 'committee' in role_name
-        is_technical_officer = 'technical' in role_name
-
-        if not (is_vendor or is_department_staff or is_purchase_officer or is_committee or is_technical_officer):
-            return Response(
-                {'error': 'Self-service password reset is not supported for this account role. Please contact an administrator.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        vendor = None
-        if is_vendor:
-            from vendors.models import Vendor
-            vendor = Vendor.objects.filter(user=user, is_active=True).first()
-            if not vendor or vendor.status != Vendor.StatusChoices.ACTIVE:
+            if not username or not email:
                 return Response(
-                    {'error': 'No active vendor account was found matching the provided username and email address.'},
+                    {'error': 'Please enter both your username and registered email address.'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-        # Generate secure Django password reset token
-        uid = urlsafe_base64_encode(force_bytes(user.pk))
-        token = default_token_generator.make_token(user)
+            # Look up active user matching both username and email
+            user = User.objects.select_related('role').filter(
+                username__iexact=username, email__iexact=email, is_active=True
+            ).first()
 
-        # Construct reset URL
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
-        reset_url = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+            if not user:
+                # Account enumeration protection: return success-compatible generic message
+                logger.info(f"Password reset requested for nonexistent or mismatched credentials: username='{username}'")
+                return Response({
+                    'message': 'If a matching active account was found, a secure password reset link has been sent to your registered email address.',
+                    'success': True,
+                    'email_sent': True
+                }, status=status.HTTP_200_OK)
 
-        # Send password reset email via Gmail SMTP
-        email_sent, email_msg = send_password_reset_email(
-            user=user,
-            reset_url=reset_url,
-            expires_in_minutes=30,
-            vendor=vendor
-        )
-
-        role_label = user.role.name if user.role else 'User'
-
-        if not email_sent:
-            AuditLog.objects.create(
-                user=user,
-                action='Password Reset Failed',
-                module='Authentication',
-                description=f"Failed to deliver password reset email to '{user.email}' for user '@{user.username}' ({role_label}): {email_msg}"
+            # Admin accounts MUST NOT have access to Forgot Password
+            role_name = user.role.name.lower() if user.role else ''
+            is_admin = bool(
+                user.is_superuser or 
+                user.is_staff or 
+                role_name in ['admin', 'system administrator']
             )
+            if is_admin:
+                return Response(
+                    {'error': 'Password reset is not available for Administrator accounts. Please contact system security or server administration.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Verify the user belongs to one of the supported non-admin roles:
+            # Vendor, Department Staff, Purchase Officer, Procurement Committee, Technical Officer
+            is_vendor = 'vendor' in role_name
+            is_department_staff = 'staff' in role_name or 'department' in role_name
+            is_purchase_officer = 'purchase' in role_name or 'procurement officer' in role_name
+            is_committee = 'committee' in role_name
+            is_technical_officer = 'technical' in role_name
+
+            if not (is_vendor or is_department_staff or is_purchase_officer or is_committee or is_technical_officer):
+                return Response(
+                    {'error': 'Self-service password reset is not supported for this account role. Please contact an administrator.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            vendor = None
+            if is_vendor:
+                from vendors.models import Vendor
+                vendor = Vendor.objects.filter(user=user, is_active=True).first()
+                if not vendor or vendor.status != Vendor.StatusChoices.ACTIVE:
+                    logger.info(f"Password reset requested for vendor without active status: username='{username}'")
+                    return Response({
+                        'message': 'If a matching active account was found, a secure password reset link has been sent to your registered email address.',
+                        'success': True,
+                        'email_sent': True
+                    }, status=status.HTTP_200_OK)
+
+            # Generate secure Django password reset token
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = default_token_generator.make_token(user)
+
+            # Construct reset URL using production frontend origin if FRONTEND_URL is default/localhost
+            frontend_url = getattr(settings, 'FRONTEND_URL', '').rstrip('/')
+            if not frontend_url or 'localhost' in frontend_url or '127.0.0.1' in frontend_url:
+                if not getattr(settings, 'DEBUG', True):
+                    frontend_url = 'https://procuramed.vercel.app'
+                else:
+                    frontend_url = frontend_url or 'http://localhost:3000'
+            reset_url = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+
+            # Send password reset email via configured email backend
+            email_sent, email_msg = send_password_reset_email(
+                user=user,
+                reset_url=reset_url,
+                expires_in_minutes=30,
+                vendor=vendor
+            )
+
+            role_label = user.role.name if user.role else 'User'
+
+            if not email_sent:
+                logger.error(f"Failed to deliver password reset email to '{user.email}' for user '@{user.username}': {email_msg}")
+                try:
+                    AuditLog.objects.create(
+                        user=user,
+                        action='Password Reset Failed',
+                        module='Authentication',
+                        description=f"Failed to deliver password reset email to '{user.email}' for user '@{user.username}' ({role_label}): {email_msg}"
+                    )
+                except Exception as audit_err:
+                    logger.warning(f"Could not record audit log for password reset failure: {audit_err}")
+
+                return Response(
+                    {
+                        'error': f"Failed to send password reset email: {email_msg}",
+                        'email_sent': False
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            try:
+                AuditLog.objects.create(
+                    user=user,
+                    action='Password Reset Requested',
+                    module='Authentication',
+                    description=f"Password reset link successfully sent to '{user.email}' for user '@{user.username}' ({role_label})."
+                )
+            except Exception as audit_err:
+                logger.warning(f"Could not record audit log for password reset request: {audit_err}")
+
+            return Response({
+                'message': f"A secure password reset link has been sent to your registered email ({user.email}). Please check your inbox.",
+                'success': True,
+                'email_sent': True
+            }, status=status.HTTP_200_OK)
+
+        except Exception as exc:
+            logger.error(f"Unhandled exception in ForgotPasswordView: {exc}", exc_info=True)
             return Response(
                 {
-                    'error': f"Failed to send password reset email: {email_msg}",
+                    'error': 'An unexpected server error occurred while processing your password reset request. Please try again later.',
                     'email_sent': False
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-        AuditLog.objects.create(
-            user=user,
-            action='Password Reset Requested',
-            module='Authentication',
-            description=f"Password reset link successfully sent to '{user.email}' for user '@{user.username}' ({role_label})."
-        )
-
-        return Response({
-            'message': f"A secure password reset link has been sent to your registered email ({user.email}). Please check your inbox.",
-            'success': True,
-            'email_sent': True
-        }, status=status.HTTP_200_OK)
 
 
 class ResetPasswordValidateView(APIView):
     """
     Validates whether the provided uid and token are still valid before showing the form.
     """
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def get(self, request):
-        uid = request.query_params.get('uid', '').strip()
-        token = request.query_params.get('token', '').strip()
-
-        if not uid or not token:
-            return Response(
-                {'valid': False, 'error': 'Invalid reset link. Missing security token parameters.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
         try:
-            user_id = force_str(urlsafe_base64_decode(uid))
-            user = User.objects.filter(pk=user_id, is_active=True).first()
-        except (TypeError, ValueError, OverflowError):
-            user = None
+            uid = request.query_params.get('uid', '').strip()
+            token = request.query_params.get('token', '').strip()
 
-        if not user or not default_token_generator.check_token(user, token):
+            if not uid or not token:
+                return Response(
+                    {'valid': False, 'error': 'Invalid reset link. Missing security token parameters.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                decoded_str = force_str(urlsafe_base64_decode(uid))
+                user_id = int(decoded_str)
+                user = User.objects.filter(pk=user_id, is_active=True).first()
+            except Exception:
+                user = None
+
+            if not user or not default_token_generator.check_token(user, token):
+                return Response(
+                    {'valid': False, 'error': 'This password reset link is invalid or has expired. Please request a new one.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            return Response({
+                'valid': True,
+                'username': user.username,
+                'email': user.email
+            }, status=status.HTTP_200_OK)
+
+        except Exception as exc:
+            logger.error(f"Unhandled exception in ResetPasswordValidateView: {exc}", exc_info=True)
             return Response(
-                {'valid': False, 'error': 'This password reset link is invalid or has expired. Please request a new one.'},
-                status=status.HTTP_400_BAD_REQUEST
+                {'valid': False, 'error': 'The server encountered an error while validating this reset link. Please try again later.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-        return Response({
-            'valid': True,
-            'username': user.username,
-            'email': user.email
-        }, status=status.HTTP_200_OK)
 
 
 class ResetPasswordConfirmView(APIView):
     """
-    Validates token and updates vendor password.
+    Validates token and updates user password.
     """
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
-        uid = request.data.get('uid', '').strip()
-        token = request.data.get('token', '').strip()
-        new_password = request.data.get('new_password', '')
-        confirm_password = request.data.get('confirm_password', '')
-
-        if not uid or not token:
-            return Response(
-                {'error': 'Invalid reset request. Missing security tokens.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if not new_password:
-            return Response(
-                {'error': 'New password is required.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
         try:
-            validate_password_complexity(new_password)
-        except ValidationError as exc:
-            msg = exc.detail[0] if isinstance(exc.detail, list) else str(exc.detail)
+            uid = request.data.get('uid', '').strip()
+            token = request.data.get('token', '').strip()
+            new_password = request.data.get('new_password', '')
+            confirm_password = request.data.get('confirm_password', '')
+
+            if not uid or not token:
+                return Response(
+                    {'error': 'Invalid reset request. Missing security tokens.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if not new_password:
+                return Response(
+                    {'error': 'New password is required.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                validate_password_complexity(new_password)
+            except ValidationError as exc:
+                msg = exc.detail[0] if isinstance(exc.detail, list) else str(exc.detail)
+                return Response(
+                    {'error': msg},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if not confirm_password:
+                return Response(
+                    {'error': 'Please confirm your new password.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if new_password != confirm_password:
+                return Response(
+                    {'error': 'New password and confirmation password do not match.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                decoded_str = force_str(urlsafe_base64_decode(uid))
+                user_id = int(decoded_str)
+                user = User.objects.filter(pk=user_id, is_active=True).first()
+            except Exception:
+                user = None
+
+            if not user:
+                return Response(
+                    {'error': 'User account not found or is no longer active.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if not default_token_generator.check_token(user, token):
+                return Response(
+                    {'error': 'This password reset link is invalid or has expired. Please request a new one.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Set new password and mark first_login as False
+            user.set_password(new_password)
+            user.first_login = False
+            user.save()
+
+            role_str = user.role.name if user.role else 'User'
+            try:
+                AuditLog.objects.create(
+                    user=user,
+                    action='Password Reset Completed',
+                    module='Authentication',
+                    description=f"User '@{user.username}' ({role_str}) successfully reset their password via secure email link."
+                )
+            except Exception as audit_err:
+                logger.warning(f"Could not record audit log for password reset completion: {audit_err}")
+
+            return Response({
+                'message': 'Your password has been reset successfully. You can now log in with your new password.',
+                'success': True
+            }, status=status.HTTP_200_OK)
+
+        except Exception as exc:
+            logger.error(f"Unhandled exception in ResetPasswordConfirmView: {exc}", exc_info=True)
             return Response(
-                {'error': msg},
-                status=status.HTTP_400_BAD_REQUEST
+                {'error': 'An unexpected server error occurred while updating your password. Please try again later.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-        if not confirm_password:
-            return Response(
-                {'error': 'Please confirm your new password.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if new_password != confirm_password:
-            return Response(
-                {'error': 'New password and confirmation password do not match.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            user_id = force_str(urlsafe_base64_decode(uid))
-            user = User.objects.filter(pk=user_id, is_active=True).first()
-        except (TypeError, ValueError, OverflowError):
-            user = None
-
-        if not user:
-            return Response(
-                {'error': 'User account not found or is no longer active.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if not default_token_generator.check_token(user, token):
-            return Response(
-                {'error': 'This password reset link is invalid or has expired. Please request a new one.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Set new password and mark first_login as False
-        user.set_password(new_password)
-        user.first_login = False
-        user.save()
-
-        role_str = user.role.name if user.role else 'User'
-        AuditLog.objects.create(
-            user=user,
-            action='Password Reset Completed',
-            module='Authentication',
-            description=f"User '@{user.username}' ({role_str}) successfully reset their password via secure email link."
-        )
-
-        return Response({
-            'message': 'Your password has been reset successfully. You can now log in with your new password.',
-            'success': True
-        }, status=status.HTTP_200_OK)
 
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
