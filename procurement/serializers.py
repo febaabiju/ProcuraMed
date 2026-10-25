@@ -128,6 +128,7 @@ class RequisitionSerializer(serializers.ModelSerializer):
     approvals = ApprovalSerializer(many=True, read_only=True)
     items = RequisitionItemSerializer(many=True, required=False)
     supporting_document = serializers.FileField(required=False, allow_null=True)
+    requisition_number = serializers.CharField(source='req_number', read_only=True)
     required_date = serializers.SerializerMethodField()
     secure_document_url = serializers.SerializerMethodField()
     technical_evaluation_advisory = serializers.SerializerMethodField()
@@ -136,7 +137,7 @@ class RequisitionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Requisition
         fields = [
-            'id', 'req_number', 'title', 'category', 'requires_technical_evaluation',
+            'id', 'req_number', 'requisition_number', 'title', 'category', 'requires_technical_evaluation',
             'technical_specialization', 'department', 'department_details',
             'requested_by', 'requested_by_details', 'assigned_purchase_officer',
             'assigned_purchase_officer_details', 'assigned_purchase_officer_name',
@@ -159,7 +160,7 @@ class RequisitionSerializer(serializers.ModelSerializer):
             'reviewed_at', 'submitted_at', 'required_date', 'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'req_number', 'requested_by', 'assigned_purchase_officer',
+            'id', 'req_number', 'requisition_number', 'requested_by', 'assigned_purchase_officer',
             'assigned_purchase_officer_details', 'assigned_purchase_officer_name',
             'assigned_purchase_officer_employee_id',
             'assignment_status', 'assigned_at',

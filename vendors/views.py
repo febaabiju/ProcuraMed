@@ -647,7 +647,10 @@ class VendorDashboardView(APIView):
         if vendor.application:
             vendor_data['address'] = vendor.application.address
             vendor_data['products_services_offered'] = vendor.application.products_services_offered
-            vendor_data['certificate_file'] = vendor.application.certificate_file.url if vendor.application.certificate_file else None
+            try:
+                vendor_data['certificate_file'] = vendor.application.certificate_file.url if vendor.application.certificate_file else None
+            except Exception:
+                vendor_data['certificate_file'] = None
 
         # 2. Real stats from database
         open_opportunities_count = QuotationRequest.objects.filter(
@@ -673,11 +676,22 @@ class VendorDashboardView(APIView):
         open_rfqs = QuotationRequest.objects.filter(
             vendor_invitations__vendor=vendor,
             status__in=['SENT', 'OPEN']
-        ).distinct().select_related('requisition', 'requisition__department').prefetch_related('vendor_invitations').order_by('-created_at')[:6]
+        ).distinct().select_related(
+            'requisition', 'requisition__department'
+        ).prefetch_related(
+            'vendor_invitations', 'items', 'requisition__items'
+        ).order_by('-created_at')[:6]
         opportunities = []
         for rfq in open_rfqs:
             dept_name = rfq.requisition.department.name if (rfq.requisition and rfq.requisition.department) else 'General Medical'
             invitation = rfq.vendor_invitations.filter(vendor=vendor).first()
+            first_rfq_item = rfq.items.first()
+            first_req_item = rfq.requisition.items.first() if (rfq.requisition and hasattr(rfq.requisition, 'items')) else None
+            first_item = first_rfq_item or first_req_item
+            item_name = first_item.item_name if first_item else rfq.title
+            quantity = first_item.quantity if first_item else None
+            unit = getattr(first_item, 'unit_of_measurement', None) or getattr(first_item, 'unit', None) or 'Units'
+            req_num = rfq.requisition.req_number if rfq.requisition else None
             opportunities.append({
                 'id': rfq.id,
                 'rfq_number': rfq.rfq_number,
@@ -691,10 +705,11 @@ class VendorDashboardView(APIView):
                 'invitation_status_display': invitation.get_status_display() if invitation else 'Invited',
                 'terms_and_conditions': rfq.terms_and_conditions,
                 'has_quoted': Quotation.objects.filter(quotation_request=rfq, vendor=vendor).exists(),
-                'requisition_number': rfq.requisition.requisition_number if rfq.requisition else None,
-                'item_name': rfq.requisition.item_name if rfq.requisition else rfq.title,
-                'quantity': rfq.requisition.quantity if rfq.requisition else None,
-                'unit': rfq.requisition.unit if rfq.requisition else 'Units',
+                'requisition_number': req_num,
+                'req_number': req_num,
+                'item_name': item_name,
+                'quantity': quantity,
+                'unit': unit,
             })
 
         # 4. Recent Quotations
@@ -776,7 +791,10 @@ class VendorProfileView(APIView):
         if vendor.application:
             vendor_data['address'] = vendor.application.address
             vendor_data['products_services_offered'] = vendor.application.products_services_offered
-            vendor_data['certificate_file'] = vendor.application.certificate_file.url if vendor.application.certificate_file else None
+            try:
+                vendor_data['certificate_file'] = vendor.application.certificate_file.url if vendor.application.certificate_file else None
+            except Exception:
+                vendor_data['certificate_file'] = None
             vendor_data['submitted_at'] = vendor.application.submitted_at
             vendor_data['reviewed_at'] = vendor.application.reviewed_at
 
