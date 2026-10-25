@@ -12,7 +12,9 @@ import {
   HiCalendar,
   HiInformationCircle,
   HiPlusCircle,
-  HiRefresh
+  HiRefresh,
+  HiDocumentText,
+  HiExternalLink
 } from 'react-icons/hi';
 
 const RFQTrackingModal = ({ isOpen, onClose, requisition, onRFQUpdated }) => {
@@ -296,39 +298,68 @@ const RFQTrackingModal = ({ isOpen, onClose, requisition, onRFQUpdated }) => {
 
                     {/* Quotation Details (if submitted) */}
                     {vendor.has_quoted ? (
-                      <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-100 grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
-                        <div>
-                          <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                            Quoted Amount
-                          </span>
-                          <span className="font-black text-slate-900 text-sm">
-                            {formatCurrency(vendor.total_amount)}
-                          </span>
+                      <div className="space-y-2">
+                        <div className="p-3.5 rounded-xl bg-slate-50/80 border border-slate-100 grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                              Quoted Amount
+                            </span>
+                            <span className="font-black text-slate-900 text-sm">
+                              {formatCurrency(vendor.total_amount)}
+                            </span>
+                            {(parseFloat(vendor.tax_amount || 0) > 0 || parseFloat(vendor.shipping_charges || 0) > 0) && (
+                              <span className="text-[10px] text-slate-500 block mt-0.5">
+                                Incl. {parseFloat(vendor.tax_percentage || 0) > 0 ? `${vendor.tax_percentage}% Tax` : 'Tax'} ({formatCurrency(vendor.tax_amount)})
+                                {parseFloat(vendor.shipping_charges || 0) > 0 && ` + Shipping (${formatCurrency(vendor.shipping_charges)})`}
+                              </span>
+                            )}
+                          </div>
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                              Delivery Lead Time
+                            </span>
+                            <span className="font-bold text-slate-800 flex items-center gap-1">
+                              <HiTruck className="w-3.5 h-3.5 text-slate-400" />
+                              {vendor.lead_time_days ? `${vendor.lead_time_days} Days` : 'Not specified'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                              Submission Date
+                            </span>
+                            <span className="font-medium text-slate-700">
+                              {formatDate(vendor.submission_date)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                              Review Status
+                            </span>
+                            <span className="font-bold text-indigo-700">
+                              {vendor.quotation_status_display || 'Submitted for Review'}
+                            </span>
+                          </div>
                         </div>
-                        <div>
-                          <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                            Delivery Lead Time
-                          </span>
-                          <span className="font-bold text-slate-800 flex items-center gap-1">
-                            <HiTruck className="w-3.5 h-3.5 text-slate-400" />
-                            {vendor.lead_time_days ? `${vendor.lead_time_days} Days` : 'Not specified'}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                            Submission Date
-                          </span>
-                          <span className="font-medium text-slate-700">
-                            {formatDate(vendor.submission_date)}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                            Review Status
-                          </span>
-                          <span className="font-bold text-indigo-700">
-                            {vendor.quotation_status_display || 'Submitted for Review'}
-                          </span>
+
+                        {/* Extra details: remarks and document attachment */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-[11px]">
+                          {vendor.remarks ? (
+                            <span className="text-slate-600 italic">
+                              Remarks: {vendor.remarks}
+                            </span>
+                          ) : <span />}
+                          {vendor.quotation_document_url && (
+                            <a
+                              href={vendor.quotation_document_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-violet-700 hover:text-violet-900 font-bold bg-violet-50 hover:bg-violet-100 px-2.5 py-1 rounded-lg border border-violet-200 transition"
+                            >
+                              <HiDocumentText className="w-3.5 h-3.5" />
+                              <span>View Quotation Document</span>
+                              <HiExternalLink className="w-3 h-3 ml-0.5" />
+                            </a>
+                          )}
                         </div>
                       </div>
                     ) : (

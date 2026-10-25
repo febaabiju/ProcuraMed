@@ -4,6 +4,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import axiosClient from '../../api/axiosClient';
 import VendorLayout from '../../components/layout/VendorLayout';
 import Button from '../../components/common/Button';
+import RFQDetailsModal from '../../components/vendor/RFQDetailsModal';
+import SubmitQuotationModal from '../../components/vendor/SubmitQuotationModal';
+import ViewQuotationModal from '../../components/vendor/ViewQuotationModal';
 import {
   HiOfficeBuilding,
   HiClipboardList,
@@ -53,6 +56,7 @@ const VendorDashboardPage = () => {
   // Modals state
   const [selectedOpportunity, setSelectedOpportunity] = useState(null);
   const [selectedQuote, setSelectedQuote] = useState(null);
+  const [selectedRfqForSubmit, setSelectedRfqForSubmit] = useState(null);
   const [selectedPO, setSelectedPO] = useState(null);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
 
@@ -847,134 +851,41 @@ const VendorDashboardPage = () => {
         )}
       </AnimatePresence>
 
-      {/* MODAL 2: OPPORTUNITY DETAILS MODAL */}
-      <AnimatePresence>
-        {selectedOpportunity && (
-          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-violet-100 space-y-5"
-            >
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-10 h-10 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center font-bold">
-                    <HiClipboardList className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-extrabold text-slate-900">{selectedOpportunity.title}</h3>
-                    <p className="text-xs font-mono font-bold text-violet-700">{selectedOpportunity.rfq_number}</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setSelectedOpportunity(null)}
-                  className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-                >
-                  <HiX className="w-5 h-5" />
-                </button>
-              </div>
+      {/* MODAL 2: FULL RFQ DETAILS MODAL */}
+      <RFQDetailsModal
+        isOpen={Boolean(selectedOpportunity)}
+        onClose={() => setSelectedOpportunity(null)}
+        rfqId={selectedOpportunity?.id}
+        initialRfq={selectedOpportunity}
+        onSubmitQuotation={(rfq) => {
+          setSelectedOpportunity(null);
+          setSelectedRfqForSubmit(rfq);
+        }}
+        onViewQuotation={(quote) => {
+          setSelectedOpportunity(null);
+          setSelectedQuote(quote);
+        }}
+        onStatusChanged={() => {
+          fetchDashboardData();
+        }}
+      />
 
-              <div className="space-y-3 text-xs">
-                <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
-                  <div>
-                    <p className="text-[10px] uppercase font-bold text-slate-400">Category</p>
-                    <p className="font-bold text-slate-800 mt-0.5">{selectedOpportunity.category}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase font-bold text-slate-400">Submission Deadline</p>
-                    <p className="font-bold text-rose-600 mt-0.5">{formatDate(selectedOpportunity.due_date)}</p>
-                  </div>
-                </div>
-
-                {selectedOpportunity.terms_and_conditions && (
-                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
-                    <p className="text-[10px] uppercase font-bold text-slate-400">Terms &amp; Instructions</p>
-                    <p className="text-slate-700 leading-relaxed font-medium">
-                      {selectedOpportunity.terms_and_conditions}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
-                <Button
-                  variant="outline"
-                  size="md"
-                  onClick={() => setSelectedOpportunity(null)}
-                  className="border-slate-200 text-slate-700"
-                >
-                  Close
-                </Button>
-                <Link to="/vendor/quotations">
-                  <Button
-                    variant="primary"
-                    size="md"
-                    className="font-bold text-white shadow-md shadow-violet-500/20"
-                    style={{ background: 'linear-gradient(135deg, #A78BFA, #7C5FF0)' }}
-                  >
-                    Submit Quotation
-                  </Button>
-                </Link>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      {/* MODAL: SUBMIT QUOTATION MODAL */}
+      <SubmitQuotationModal
+        isOpen={Boolean(selectedRfqForSubmit)}
+        onClose={() => setSelectedRfqForSubmit(null)}
+        rfq={selectedRfqForSubmit}
+        onQuotationSubmitted={() => {
+          fetchDashboardData();
+        }}
+      />
 
       {/* MODAL 3: QUOTATION DETAILS MODAL */}
-      <AnimatePresence>
-        {selectedQuote && (
-          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-violet-100 space-y-5"
-            >
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-10 h-10 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
-                    <HiDocumentText className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-extrabold text-slate-900">Quotation Details</h3>
-                    <p className="text-xs font-mono font-bold text-violet-700">{selectedQuote.quotation_number}</p>
-                  </div>
-                </div>
-                <button onClick={() => setSelectedQuote(null)} className="p-1 text-slate-400 hover:text-slate-600">
-                  <HiX className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="space-y-2.5 text-xs text-slate-700">
-                <p className="flex justify-between p-2.5 bg-slate-50 rounded-xl">
-                  <span className="text-slate-400">Procurement Ref:</span>
-                  <strong className="font-mono text-violet-700">{selectedQuote.rfq_number}</strong>
-                </p>
-                <p className="flex justify-between p-2.5 bg-slate-50 rounded-xl">
-                  <span className="text-slate-400">Total Bidded Amount:</span>
-                  <strong className="text-slate-900 font-bold text-sm">{formatCurrency(selectedQuote.total_amount)}</strong>
-                </p>
-                <p className="flex justify-between p-2.5 bg-slate-50 rounded-xl">
-                  <span className="text-slate-400">Evaluation Status:</span>
-                  <strong className="text-violet-700 uppercase font-bold">{selectedQuote.status}</strong>
-                </p>
-                <p className="flex justify-between p-2.5 bg-slate-50 rounded-xl">
-                  <span className="text-slate-400">Submission Date:</span>
-                  <strong className="text-slate-800">{formatDate(selectedQuote.submission_date)}</strong>
-                </p>
-              </div>
-
-              <div className="flex justify-end pt-3 border-t border-slate-100">
-                <Button variant="outline" size="md" onClick={() => setSelectedQuote(null)} className="border-slate-200 text-slate-700">
-                  Close
-                </Button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      <ViewQuotationModal
+        isOpen={Boolean(selectedQuote)}
+        onClose={() => setSelectedQuote(null)}
+        quotation={selectedQuote}
+      />
 
       {/* MODAL 4: PURCHASE ORDER DETAILS MODAL */}
       <AnimatePresence>

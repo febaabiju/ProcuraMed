@@ -24,6 +24,8 @@ import SystemSettingsPage from './pages/admin/SystemSettingsPage';
 import VendorDashboardPage from './pages/vendor/VendorDashboardPage';
 import VendorProductsPage from './pages/vendor/VendorProductsPage';
 import VendorSupplyCategoriesPage from './pages/vendor/VendorSupplyCategoriesPage';
+import VendorOpportunitiesPage from './pages/vendor/VendorOpportunitiesPage';
+import VendorQuotationsPage from './pages/vendor/VendorQuotationsPage';
 import VendorChangePasswordPage from './pages/vendor/VendorChangePasswordPage';
 import VendorPlaceholderPage from './pages/vendor/VendorPlaceholderPage';
 import DepartmentStaffDashboardPage from './pages/staff/DepartmentStaffDashboardPage';
@@ -303,7 +305,15 @@ function App() {
             path="/vendor/opportunities"
             element={
               <VendorProtectedRoute>
-                <VendorPlaceholderPage path="/vendor/opportunities" />
+                <VendorOpportunitiesPage />
+              </VendorProtectedRoute>
+            }
+          />
+          <Route
+            path="/vendor/purchase-requests"
+            element={
+              <VendorProtectedRoute>
+                <VendorOpportunitiesPage />
               </VendorProtectedRoute>
             }
           />
@@ -311,7 +321,7 @@ function App() {
             path="/vendor/quotations"
             element={
               <VendorProtectedRoute>
-                <VendorPlaceholderPage path="/vendor/quotations" />
+                <VendorQuotationsPage />
               </VendorProtectedRoute>
             }
           />

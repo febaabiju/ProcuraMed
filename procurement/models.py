@@ -1045,6 +1045,10 @@ class Quotation(models.Model):
     submission_date = models.DateTimeField(auto_now_add=True)
     valid_until = models.DateField(null=True, blank=True)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    tax_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0.00, blank=True, null=True, verbose_name="Tax / GST %")
+    tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00, blank=True, null=True, verbose_name="Tax Amount")
+    shipping_charges = models.DecimalField(max_digits=12, decimal_places=2, default=0.00, blank=True, null=True, verbose_name="Shipping Charges")
+    quotation_document = models.FileField(upload_to='quotations/documents/', null=True, blank=True, verbose_name="Quotation Document")
     lead_time_days = models.PositiveIntegerField(null=True, blank=True, help_text="Delivery lead time in days")
     status = models.CharField(
         max_length=20, choices=StatusChoices.choices, default=StatusChoices.SUBMITTED

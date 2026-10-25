@@ -552,15 +552,25 @@ class QuotationSerializer(serializers.ModelSerializer):
     vendor_details = VendorSerializer(source='vendor', read_only=True)
     items = QuotationItemSerializer(many=True, read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    quotation_document_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Quotation
         fields = [
             'id', 'quotation_number', 'quotation_request', 'vendor', 'vendor_details',
-            'submission_date', 'valid_until', 'total_amount', 'lead_time_days',
-            'status', 'status_display', 'remarks', 'items', 'created_at', 'updated_at'
+            'submission_date', 'valid_until', 'total_amount', 'tax_percentage',
+            'tax_amount', 'shipping_charges', 'quotation_document', 'quotation_document_url',
+            'lead_time_days', 'status', 'status_display', 'remarks', 'items', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'quotation_number', 'created_at', 'updated_at']
+
+    def get_quotation_document_url(self, obj):
+        if obj.quotation_document:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.quotation_document.url)
+            return obj.quotation_document.url
+        return None
 
 
 class RFQItemSerializer(serializers.ModelSerializer):
@@ -610,6 +620,8 @@ class QuotationRequestSerializer(serializers.ModelSerializer):
     has_accepted_quotation = serializers.SerializerMethodField()
     winning_quotation_id = serializers.SerializerMethodField()
     vendor_tracking = serializers.SerializerMethodField()
+    my_invitation = serializers.SerializerMethodField()
+    my_quotation = serializers.SerializerMethodField()
 
     class Meta:
         model = QuotationRequest
@@ -622,14 +634,15 @@ class QuotationRequestSerializer(serializers.ModelSerializer):
             'items', 'vendor_invitations', 'invited_vendors_count',
             'quotations', 'quotations_count', 'quotation_workflow_status',
             'quotation_workflow_status_display', 'has_accepted_quotation',
-            'winning_quotation_id', 'vendor_tracking',
+            'winning_quotation_id', 'vendor_tracking', 'my_invitation', 'my_quotation',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'rfq_number', 'created_by', 'cancelled_by', 'cancelled_at',
             'created_at', 'updated_at', 'status_display', 'is_expired', 'invited_vendors_count',
             'quotations_count', 'quotation_workflow_status', 'quotation_workflow_status_display',
-            'has_accepted_quotation', 'winning_quotation_id', 'vendor_tracking'
+            'has_accepted_quotation', 'winning_quotation_id', 'vendor_tracking',
+            'my_invitation', 'my_quotation'
         ]
 
     def get_is_expired(self, obj):
@@ -689,6 +702,7 @@ class QuotationRequestSerializer(serializers.ModelSerializer):
         return accepted.id if accepted else None
 
     def get_vendor_tracking(self, obj):
+        request = self.context.get('request')
         tracking = []
         invitations = obj.vendor_invitations.select_related('vendor', 'invited_by').all()
         quotations_by_vendor = {
@@ -716,6 +730,10 @@ class QuotationRequestSerializer(serializers.ModelSerializer):
                 'quotation_status': q.status if q else 'PENDING',
                 'quotation_status_display': q.get_status_display() if q else 'Awaiting Quotation',
                 'total_amount': str(q.total_amount) if q else None,
+                'tax_percentage': str(q.tax_percentage) if q and q.tax_percentage is not None else '0.00',
+                'tax_amount': str(q.tax_amount) if q and q.tax_amount is not None else '0.00',
+                'shipping_charges': str(q.shipping_charges) if q and q.shipping_charges is not None else '0.00',
+                'quotation_document_url': (request.build_absolute_uri(q.quotation_document.url) if request else q.quotation_document.url) if (q and q.quotation_document) else None,
                 'lead_time_days': q.lead_time_days if q else None,
                 'valid_until': q.valid_until.isoformat() if q and q.valid_until else None,
                 'submission_date': q.submission_date.isoformat() if q and q.submission_date else None,
@@ -732,6 +750,55 @@ class QuotationRequestSerializer(serializers.ModelSerializer):
                 ] if q else []
             })
         return tracking
+
+    def _get_request_vendor(self):
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return None
+        user = request.user
+        role_name = user.role.name.lower() if user.role else ''
+        if 'vendor' in role_name or hasattr(user, 'vendor_profile'):
+            from vendors.models import Vendor
+            return getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+        return None
+
+    def get_my_invitation(self, obj):
+        vendor = self._get_request_vendor()
+        if not vendor:
+            return None
+        inv = obj.vendor_invitations.filter(vendor=vendor).first()
+        if not inv:
+            return None
+        return {
+            'id': inv.id,
+            'status': inv.status,
+            'status_display': inv.get_status_display(),
+            'invited_at': inv.invited_at.isoformat() if inv.invited_at else None,
+            'notes': inv.notes
+        }
+
+    def get_my_quotation(self, obj):
+        vendor = self._get_request_vendor()
+        if not vendor:
+            return None
+        q = obj.quotations.filter(vendor=vendor).prefetch_related('items').first()
+        if not q:
+            return None
+        return QuotationSerializer(q, context=self.context).data
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        vendor = self._get_request_vendor()
+        if vendor:
+            # Mask other vendors' quotations and tracking to enforce privacy
+            my_quote = data.get('my_quotation')
+            data['quotations'] = [my_quote] if my_quote else []
+            data['quotations_count'] = 1 if my_quote else 0
+            data['vendor_tracking'] = [
+                vt for vt in data.get('vendor_tracking', [])
+                if vt.get('vendor_id') == vendor.id
+            ]
+        return data
 
 
 class PurchaseOrderItemSerializer(serializers.ModelSerializer):

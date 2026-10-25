@@ -49,7 +49,7 @@ const VendorLayout = ({
     { name: 'Dashboard', path: '/vendor/dashboard', icon: HiHome },
     { name: 'My Products', path: '/vendor/products', icon: HiCube },
     { name: 'Supply Categories', path: '/vendor/supply-categories', icon: HiTag },
-    { name: 'Purchase Requests / Opportunities', path: '/vendor/opportunities', icon: HiClipboardList },
+    { name: 'Purchase Requests / Quotation Requests', path: '/vendor/opportunities', icon: HiClipboardList },
     { name: 'Quotations', path: '/vendor/quotations', icon: HiDocumentText },
     { name: 'Purchase Orders', path: '/vendor/purchase-orders', icon: HiShoppingBag },
     { name: 'Deliveries', path: '/vendor/deliveries', icon: HiTruck },

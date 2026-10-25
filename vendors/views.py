@@ -522,7 +522,10 @@ class VendorDashboardView(APIView):
             vendor_data['certificate_file'] = vendor.application.certificate_file.url if vendor.application.certificate_file else None
 
         # 2. Real stats from database
-        open_opportunities_count = QuotationRequest.objects.filter(status='OPEN').count()
+        open_opportunities_count = QuotationRequest.objects.filter(
+            vendor_invitations__vendor=vendor,
+            status__in=['SENT', 'OPEN']
+        ).distinct().count()
         quotations_submitted_count = Quotation.objects.filter(vendor=vendor).count()
         pending_quotations_count = Quotation.objects.filter(vendor=vendor, status__in=['SUBMITTED', 'UNDER_REVIEW']).count()
         approved_pos_count = PurchaseOrder.objects.filter(vendor=vendor).count()
@@ -538,21 +541,32 @@ class VendorDashboardView(APIView):
             'completed_orders': completed_orders_count,
         }
 
-        # 3. Procurement Opportunities (Open RFQs)
-        open_rfqs = QuotationRequest.objects.filter(status='OPEN').select_related('requisition', 'requisition__department').order_by('-created_at')[:6]
+        # 3. Procurement Opportunities (Open RFQs specifically invited to this vendor)
+        open_rfqs = QuotationRequest.objects.filter(
+            vendor_invitations__vendor=vendor,
+            status__in=['SENT', 'OPEN']
+        ).distinct().select_related('requisition', 'requisition__department').prefetch_related('vendor_invitations').order_by('-created_at')[:6]
         opportunities = []
         for rfq in open_rfqs:
             dept_name = rfq.requisition.department.name if (rfq.requisition and rfq.requisition.department) else 'General Medical'
+            invitation = rfq.vendor_invitations.filter(vendor=vendor).first()
             opportunities.append({
                 'id': rfq.id,
                 'rfq_number': rfq.rfq_number,
                 'title': rfq.title,
                 'category': dept_name,
+                'department': dept_name,
                 'issue_date': rfq.issue_date,
                 'due_date': rfq.due_date,
                 'status': rfq.status,
+                'invitation_status': invitation.status if invitation else 'INVITED',
+                'invitation_status_display': invitation.get_status_display() if invitation else 'Invited',
                 'terms_and_conditions': rfq.terms_and_conditions,
                 'has_quoted': Quotation.objects.filter(quotation_request=rfq, vendor=vendor).exists(),
+                'requisition_number': rfq.requisition.requisition_number if rfq.requisition else None,
+                'item_name': rfq.requisition.item_name if rfq.requisition else rfq.title,
+                'quantity': rfq.requisition.quantity if rfq.requisition else None,
+                'unit': rfq.requisition.unit if rfq.requisition else 'Units',
             })
 
         # 4. Recent Quotations

@@ -1277,6 +1277,7 @@ class QuotationRequestViewSet(viewsets.ModelViewSet):
         is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
         is_committee = 'committee' in role_name
         is_purchase = 'purchase' in role_name or 'technical' in role_name
+        is_vendor = 'vendor' in role_name or hasattr(user, 'vendor_profile')
 
         qs = QuotationRequest.objects.select_related(
             'requisition', 'created_by', 'cancelled_by', 'requisition__department', 'requisition__assigned_committee_member'
@@ -1292,7 +1293,14 @@ class QuotationRequestViewSet(viewsets.ModelViewSet):
             expired_qs.update(status=QuotationRequest.StatusChoices.EXPIRED)
 
         # Scoping permissions
-        if is_committee and not is_admin:
+        if is_vendor:
+            from vendors.models import Vendor
+            vendor = getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+            if not vendor:
+                return QuotationRequest.objects.none()
+            # Vendors can ONLY see RFQs to which they were specifically invited
+            return qs.filter(vendor_invitations__vendor=vendor).distinct().order_by('-created_at')
+        elif is_committee and not is_admin:
             # Committee members see RFQs created by them or linked to requisitions assigned to them
             qs = qs.filter(
                 Q(created_by=user) |
@@ -1303,6 +1311,32 @@ class QuotationRequestViewSet(viewsets.ModelViewSet):
             qs = qs.filter(requisition__requested_by=user)
 
         return qs.order_by('-created_at')
+
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Retrieve RFQ details. If the requesting user is a vendor, automatically
+        update their invitation status from INVITED to VIEWED.
+        """
+        instance = self.get_object()
+        user = request.user
+        role_name = user.role.name.lower() if user.role else ''
+        is_vendor = 'vendor' in role_name or hasattr(user, 'vendor_profile')
+        if is_vendor:
+            from vendors.models import Vendor
+            vendor = getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+            if vendor:
+                inv = instance.vendor_invitations.filter(vendor=vendor).first()
+                if inv and inv.status == RFQVendorInvitation.InvitationStatus.INVITED:
+                    inv.status = RFQVendorInvitation.InvitationStatus.VIEWED
+                    inv.save(update_fields=['status'])
+                    AuditLog.objects.create(
+                        user=user,
+                        action='Vendor Viewed RFQ',
+                        module='Vendor Portal',
+                        description=f"Vendor '{vendor.company_name}' viewed quotation request {instance.rfq_number}."
+                    )
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
 
     def create(self, request, *args, **kwargs):
         """
@@ -1749,6 +1783,174 @@ class QuotationRequestViewSet(viewsets.ModelViewSet):
             'rfq': serializer.data
         }, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['post'], url_path='submit-quotation', permission_classes=[IsAuthenticated], parser_classes=[MultiPartParser, FormParser, JSONParser])
+    def submit_quotation(self, request, pk=None):
+        """
+        Action for a vendor to submit their formal quotation against an issued RFQ.
+        Validates:
+        1. User must be an active vendor invited to this RFQ.
+        2. RFQ must be active and not expired/cancelled/closed.
+        3. Validates required pricing and breakdown (unit price, total, taxes, shipping, lead time, remarks, document).
+        4. Updates vendor invitation to QUOTED.
+        5. Updates requisition status to QUOTATIONS_RECEIVED.
+        6. Keeps RFQ open for comparison.
+        """
+        rfq = self.get_object()
+        user = request.user
+        from vendors.models import Vendor
+        vendor = getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+
+        if not vendor:
+            return Response(
+                {'detail': 'Only registered vendors can submit quotations.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        invitation = rfq.vendor_invitations.filter(vendor=vendor).first()
+        if not invitation:
+            return Response(
+                {'detail': 'Your vendor profile was not invited to this Request for Quotation.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if rfq.status == QuotationRequest.StatusChoices.CANCELLED:
+            return Response({'detail': 'This RFQ has been cancelled and cannot accept quotations.'}, status=status.HTTP_400_BAD_REQUEST)
+        if rfq.status == QuotationRequest.StatusChoices.CLOSED:
+            return Response({'detail': 'This RFQ has already been closed and cannot accept further quotations.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        today = timezone.now().date()
+        if rfq.due_date and rfq.due_date < today:
+            return Response({'detail': f'The deadline for this RFQ expired on {rfq.due_date}.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = request.data
+        total_amount_raw = data.get('total_amount')
+        if total_amount_raw is None or str(total_amount_raw).strip() == '':
+            return Response({'total_amount': 'Total quotation amount is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            total_amount = float(total_amount_raw)
+            if total_amount <= 0:
+                raise ValueError()
+        except (ValueError, TypeError):
+            return Response({'total_amount': 'Please enter a valid positive quotation amount.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        tax_pct = 0.00
+        if data.get('tax_percentage') is not None and str(data.get('tax_percentage')).strip():
+            try:
+                tax_pct = max(0.0, float(data.get('tax_percentage')))
+            except (ValueError, TypeError):
+                tax_pct = 0.00
+
+        tax_amt = 0.00
+        if data.get('tax_amount') is not None and str(data.get('tax_amount')).strip():
+            try:
+                tax_amt = max(0.0, float(data.get('tax_amount')))
+            except (ValueError, TypeError):
+                tax_amt = 0.00
+
+        shipping_charges = 0.00
+        if data.get('shipping_charges') is not None and str(data.get('shipping_charges')).strip():
+            try:
+                shipping_charges = max(0.0, float(data.get('shipping_charges')))
+            except (ValueError, TypeError):
+                shipping_charges = 0.00
+
+        lead_time_days = None
+        if data.get('lead_time_days') is not None and str(data.get('lead_time_days')).strip():
+            try:
+                lead_time_days = max(1, int(data.get('lead_time_days')))
+            except (ValueError, TypeError):
+                lead_time_days = None
+
+        valid_until = data.get('valid_until') or None
+        remarks = (data.get('remarks') or '').strip()
+        quotation_document = request.FILES.get('quotation_document')
+
+        # Items parsing
+        import json
+        items_raw = data.get('items')
+        items_data = []
+        if isinstance(items_raw, str):
+            try:
+                items_data = json.loads(items_raw)
+            except Exception:
+                items_data = []
+        elif isinstance(items_raw, list):
+            items_data = items_raw
+
+        with transaction.atomic():
+            quotation, created = Quotation.objects.update_or_create(
+                quotation_request=rfq,
+                vendor=vendor,
+                defaults={
+                    'total_amount': total_amount,
+                    'tax_percentage': tax_pct,
+                    'tax_amount': tax_amt,
+                    'shipping_charges': shipping_charges,
+                    'lead_time_days': lead_time_days,
+                    'valid_until': valid_until,
+                    'remarks': remarks,
+                    'status': Quotation.StatusChoices.SUBMITTED,
+                }
+            )
+
+            if quotation_document:
+                quotation.quotation_document = quotation_document
+                quotation.save(update_fields=['quotation_document'])
+
+            # Save items
+            if items_data and isinstance(items_data, list):
+                quotation.items.all().delete()
+                for it in items_data:
+                    u_price = float(it.get('unit_price') or 0.00)
+                    qty = int(it.get('quantity') or 1)
+                    QuotationItem.objects.create(
+                        quotation=quotation,
+                        item_name=it.get('item_name') or 'Item',
+                        specification=it.get('specification') or '',
+                        quantity=qty,
+                        unit_price=u_price,
+                        total_price=float(it.get('total_price') or (u_price * qty))
+                    )
+            elif not quotation.items.exists():
+                for r_item in rfq.items.all():
+                    QuotationItem.objects.create(
+                        quotation=quotation,
+                        item_name=r_item.item_name,
+                        specification=r_item.technical_specifications or '',
+                        quantity=r_item.quantity,
+                        unit_price=float(r_item.estimated_unit_price or 0.00),
+                        total_price=float(r_item.total_estimated_price or 0.00)
+                    )
+
+            # Update invitation status
+            invitation.status = RFQVendorInvitation.InvitationStatus.QUOTED
+            invitation.save(update_fields=['status'])
+
+            # Transition requisition status from RFQ_ISSUED to QUOTATIONS_RECEIVED
+            req = rfq.requisition
+            if req and req.status == Requisition.StatusChoices.RFQ_ISSUED:
+                req.status = Requisition.StatusChoices.QUOTATIONS_RECEIVED
+                req.save(update_fields=['status', 'updated_at'])
+
+            AuditLog.objects.create(
+                user=user,
+                action='Quotation Submitted',
+                module='Vendor Portal',
+                description=(
+                    f"Vendor '{vendor.company_name}' submitted quotation {quotation.quotation_number} "
+                    f"for RFQ {rfq.rfq_number} (Total: ₹{total_amount:,.2f})."
+                )
+            )
+
+        rfq_serializer = QuotationRequestSerializer(rfq, context={'request': request})
+        quote_serializer = QuotationSerializer(quotation, context={'request': request})
+        return Response({
+            'message': f"Quotation {quotation.quotation_number} has been submitted successfully.",
+            'quotation': quote_serializer.data,
+            'rfq': rfq_serializer.data
+        }, status=status.HTTP_201_CREATED)
+
     @action(detail=False, methods=['get'], url_path='summary')
     def summary(self, request):
         """
@@ -1784,6 +1986,30 @@ class QuotationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filterset_class = QuotationFilter
     search_fields = ['quotation_number', 'remarks']
+
+    def get_queryset(self):
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return Quotation.objects.none()
+
+        qs = Quotation.objects.select_related('quotation_request', 'vendor').prefetch_related('items')
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
+        is_vendor = 'vendor' in role_name or hasattr(user, 'vendor_profile')
+
+        if is_vendor:
+            from vendors.models import Vendor
+            vendor = getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+            if not vendor:
+                return Quotation.objects.none()
+            return qs.filter(vendor=vendor).order_by('-created_at')
+        elif not is_admin:
+            return qs.filter(
+                Q(quotation_request__created_by=user) |
+                Q(quotation_request__requisition__assigned_committee_member=user)
+            ).order_by('-created_at')
+
+        return qs.order_by('-created_at')
 
     def perform_create(self, serializer):
         quotation = serializer.save()
