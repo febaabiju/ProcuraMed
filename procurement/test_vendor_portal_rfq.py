@@ -1,7 +1,9 @@
+import json
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 from rest_framework import status
 from decimal import Decimal
@@ -16,6 +18,9 @@ User = get_user_model()
 
 
 class VendorPortalRFQIntegrationTests(TestCase):
+    def make_valid_pdf(self, name="quotation.pdf", content=b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\nxref\n0 2\n0000000000 65535 f \n0000000009 00000 n \ntrailer\n<< /Size 2 /Root 1 0 R >>\nstartxref\n50\n%%EOF"):
+        return SimpleUploadedFile(name, content, content_type="application/pdf")
+
     def setUp(self):
         self.client = APIClient()
 
@@ -263,7 +268,8 @@ class VendorPortalRFQIntegrationTests(TestCase):
             'lead_time_days': 10,
             'valid_until': (timezone.now().date() + timedelta(days=45)).isoformat(),
             'remarks': 'Includes 2 years comprehensive manufacturer on-site warranty and calibration report.',
-            'items': [
+            'quotation_document': self.make_valid_pdf('alpha_quote.pdf'),
+            'items': json.dumps([
                 {
                     'item_name': 'High-Resolution Ultrasound Transducer Probe',
                     'specification': 'Curvilinear 3.5MHz probe',
@@ -271,10 +277,10 @@ class VendorPortalRFQIntegrationTests(TestCase):
                     'unit_price': '112500.00',
                     'total_price': '225000.00'
                 }
-            ]
+            ])
         }
 
-        res = self.client.post(f'/api/procurement/rfqs/{self.rfq.id}/submit-quotation/', payload, format='json')
+        res = self.client.post(f'/api/procurement/rfqs/{self.rfq.id}/submit-quotation/', payload, format='multipart')
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
         self.assertIn('quotation', res.data)
         quote_data = res.data['quotation']
@@ -341,9 +347,10 @@ class VendorPortalRFQIntegrationTests(TestCase):
             'shipping_charges': '0.00',
             'lead_time_days': 7,
             'valid_until': (timezone.now().date() + timedelta(days=30)).isoformat(),
-            'remarks': 'Alpha Medical proposal'
+            'remarks': 'Alpha Medical proposal',
+            'quotation_document': self.make_valid_pdf('alpha_proposal.pdf')
         }
-        res_a = self.client.post(f'/api/procurement/rfqs/{self.rfq.id}/submit-quotation/', payload_a, format='json')
+        res_a = self.client.post(f'/api/procurement/rfqs/{self.rfq.id}/submit-quotation/', payload_a, format='multipart')
         self.assertEqual(res_a.status_code, status.HTTP_201_CREATED)
         quote_a_id = res_a.data['quotation']['id']
 
@@ -397,3 +404,156 @@ class VendorPortalRFQIntegrationTests(TestCase):
         self.assertEqual(res_quotes_b.status_code, status.HTTP_200_OK)
         my_quotes_b = res_quotes_b.data.get('results', res_quotes_b.data)
         self.assertEqual(len(my_quotes_b), 0)
+
+    def test_quotation_submission_requires_mandatory_pdf(self):
+        """
+        Verify that submitting a quotation without a PDF document is rejected with HTTP 400.
+        """
+        self.client.force_authenticate(user=self.vendor_user_a)
+        payload = {
+            'total_amount': '150000.00',
+            'lead_time_days': 5,
+            'valid_until': (timezone.now().date() + timedelta(days=30)).isoformat(),
+            'remarks': 'Missing document test'
+        }
+        res = self.client.post(f'/api/procurement/rfqs/{self.rfq.id}/submit-quotation/', payload, format='multipart')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('quotation_document', res.data)
+        self.assertIn('mandatory', str(res.data['quotation_document']).lower())
+
+    def test_quotation_submission_rejects_non_pdf_formats(self):
+        """
+        Verify that DOC, DOCX, PNG, and non-PDF files are rejected with HTTP 400.
+        """
+        self.client.force_authenticate(user=self.vendor_user_a)
+
+        # 1. Reject DOCX file
+        docx_file = SimpleUploadedFile(
+            "quote.docx",
+            b"PK\x03\x04 fake docx binary data",
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+        res_docx = self.client.post(f'/api/procurement/rfqs/{self.rfq.id}/submit-quotation/', {
+            'total_amount': '150000.00',
+            'lead_time_days': 5,
+            'valid_until': (timezone.now().date() + timedelta(days=30)).isoformat(),
+            'quotation_document': docx_file
+        }, format='multipart')
+        self.assertEqual(res_docx.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('quotation_document', res_docx.data)
+
+        # 2. Reject PNG image
+        png_file = SimpleUploadedFile(
+            "quote.png",
+            b"\x89PNG\r\n\x1a\n fake png data",
+            content_type="image/png"
+        )
+        res_png = self.client.post(f'/api/procurement/rfqs/{self.rfq.id}/submit-quotation/', {
+            'total_amount': '150000.00',
+            'lead_time_days': 5,
+            'valid_until': (timezone.now().date() + timedelta(days=30)).isoformat(),
+            'quotation_document': png_file
+        }, format='multipart')
+        self.assertEqual(res_png.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('quotation_document', res_png.data)
+
+    def test_quotation_submission_rejects_corrupted_header_pdf(self):
+        """
+        Verify that a file renamed to .pdf without %PDF- magic bytes is rejected with HTTP 400.
+        """
+        self.client.force_authenticate(user=self.vendor_user_a)
+        fake_pdf = SimpleUploadedFile("fake.pdf", b"NOT A VALID PDF HEADER", content_type="application/pdf")
+        res = self.client.post(f'/api/procurement/rfqs/{self.rfq.id}/submit-quotation/', {
+            'total_amount': '150000.00',
+            'lead_time_days': 5,
+            'valid_until': (timezone.now().date() + timedelta(days=30)).isoformat(),
+            'quotation_document': fake_pdf
+        }, format='multipart')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('quotation_document', res.data)
+
+    def test_procurement_committee_securely_views_and_downloads_quotation_pdf(self):
+        """
+        Verify Procurement Committee can securely view and download submitted quotation PDF.
+        """
+        # Vendor submits valid PDF
+        self.client.force_authenticate(user=self.vendor_user_a)
+        payload = {
+            'total_amount': '210000.00',
+            'lead_time_days': 7,
+            'valid_until': (timezone.now().date() + timedelta(days=30)).isoformat(),
+            'quotation_document': self.make_valid_pdf('signed_quotation.pdf')
+        }
+        res_submit = self.client.post(f'/api/procurement/rfqs/{self.rfq.id}/submit-quotation/', payload, format='multipart')
+        self.assertEqual(res_submit.status_code, status.HTTP_201_CREATED)
+        quote_id = res_submit.data['quotation']['id']
+
+        # Committee views/downloads document via dedicated API endpoint
+        self.client.force_authenticate(user=self.committee_user)
+        res_doc = self.client.get(f'/api/procurement/quotations/{quote_id}/document/')
+        self.assertEqual(res_doc.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_doc['Content-Type'], 'application/pdf')
+        self.assertIn('inline;', res_doc['Content-Disposition'])
+
+    def test_competitor_vendor_denied_access_to_quotation_pdf(self):
+        """
+        Verify competitor vendors cannot access another vendor's quotation document (403 Forbidden).
+        """
+        # Vendor A submits
+        self.client.force_authenticate(user=self.vendor_user_a)
+        payload = {
+            'total_amount': '195000.00',
+            'lead_time_days': 7,
+            'valid_until': (timezone.now().date() + timedelta(days=30)).isoformat(),
+            'quotation_document': self.make_valid_pdf('alpha_confidential_quote.pdf')
+        }
+        res_submit = self.client.post(f'/api/procurement/rfqs/{self.rfq.id}/submit-quotation/', payload, format='multipart')
+        quote_id = res_submit.data['quotation']['id']
+
+        # Vendor B attempts to view Vendor A's quotation document
+        self.client.force_authenticate(user=self.vendor_user_b)
+        res_competitor = self.client.get(f'/api/procurement/quotations/{quote_id}/document/')
+        self.assertEqual(res_competitor.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_token_query_parameter_authentication_for_quotation_document(self):
+        """
+        Verify ?token=<jwt> allows secure document access when opening in a new tab without Authorization header.
+        """
+        # Vendor A submits
+        self.client.force_authenticate(user=self.vendor_user_a)
+        payload = {
+            'total_amount': '180000.00',
+            'lead_time_days': 5,
+            'valid_until': (timezone.now().date() + timedelta(days=30)).isoformat(),
+            'quotation_document': self.make_valid_pdf('tab_open_quote.pdf')
+        }
+        res_submit = self.client.post(f'/api/procurement/rfqs/{self.rfq.id}/submit-quotation/', payload, format='multipart')
+        quote_id = res_submit.data['quotation']['id']
+
+        # Unauthenticate client
+        self.client.force_authenticate(user=None)
+
+        # Generate JWT token for committee user
+        from rest_framework_simplejwt.tokens import RefreshToken
+        token = str(RefreshToken.for_user(self.committee_user).access_token)
+
+        # Request with ?token=...
+        res_token = self.client.get(f'/api/procurement/quotations/{quote_id}/document/?token={token}')
+        self.assertEqual(res_token.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_token['Content-Type'], 'application/pdf')
+
+    def test_secure_media_view_endpoint_authenticated_and_unauthenticated(self):
+        """
+        Verify /media/<path:path> route enforces authentication and serves files in production.
+        """
+        # 1. Unauthenticated request to /media/ gets 401
+        self.client.force_authenticate(user=None)
+        res_unauth = self.client.get('/media/requisitions/documents/department_specs.pdf')
+        self.assertEqual(res_unauth.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        # 2. Authenticated request gets 200
+        self.client.force_authenticate(user=self.committee_user)
+        res_auth = self.client.get('/media/requisitions/documents/department_specs.pdf')
+        self.assertEqual(res_auth.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_auth['Content-Type'], 'application/pdf')
+

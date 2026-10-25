@@ -43,11 +43,12 @@ class TechnicalEvaluationSerializer(serializers.ModelSerializer):
         return None
 
     def get_supporting_document_url(self, obj):
-        if obj.supporting_document:
+        if obj.supporting_document or getattr(obj, 'technical_document', None):
             request = self.context.get('request')
+            rel = f"/api/procurement/requisitions/{obj.id}/document/"
             if request:
-                return request.build_absolute_uri(obj.supporting_document.url)
-            return obj.supporting_document.url
+                return request.build_absolute_uri(rel)
+            return rel
         return None
 
 
@@ -220,7 +221,7 @@ class RequisitionSerializer(serializers.ModelSerializer):
         return min(dates).isoformat() if dates else None
 
     def get_secure_document_url(self, obj):
-        if obj.supporting_document:
+        if obj.supporting_document or obj.technical_document:
             request = self.context.get('request')
             rel_url = f"/api/procurement/requisitions/{obj.id}/document/"
             if request:
@@ -229,11 +230,12 @@ class RequisitionSerializer(serializers.ModelSerializer):
         return None
 
     def get_technical_document_url(self, obj):
-        if obj.technical_document:
+        if obj.technical_document or obj.supporting_document:
             request = self.context.get('request')
+            rel_url = f"/api/procurement/requisitions/{obj.id}/document/"
             if request:
-                return request.build_absolute_uri(obj.technical_document.url)
-            return obj.technical_document.url
+                return request.build_absolute_uri(rel_url)
+            return rel_url
         return None
 
     def get_assigned_committee_member_name(self, obj):
@@ -564,12 +566,28 @@ class QuotationSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'quotation_number', 'created_at', 'updated_at']
 
+    def validate_quotation_document(self, value):
+        if value:
+            max_size = 15 * 1024 * 1024
+            if value.size > max_size:
+                raise serializers.ValidationError("Quotation document file size exceeds the 15MB limit.")
+            import os
+            ext = os.path.splitext(value.name or '')[1].lower()
+            if ext != '.pdf':
+                raise serializers.ValidationError("Only PDF files (.pdf) are accepted. DOC, DOCX, and images are rejected.")
+            header = value.read(5)
+            value.seek(0)
+            if header != b'%PDF-':
+                raise serializers.ValidationError("Uploaded file is not a valid PDF document. Header signature verification failed.")
+        return value
+
     def get_quotation_document_url(self, obj):
         if obj.quotation_document:
             request = self.context.get('request')
+            rel_url = f"/api/procurement/quotations/{obj.id}/document/"
             if request:
-                return request.build_absolute_uri(obj.quotation_document.url)
-            return obj.quotation_document.url
+                return request.build_absolute_uri(rel_url)
+            return rel_url
         return None
 
 
@@ -733,7 +751,7 @@ class QuotationRequestSerializer(serializers.ModelSerializer):
                 'tax_percentage': str(q.tax_percentage) if q and q.tax_percentage is not None else '0.00',
                 'tax_amount': str(q.tax_amount) if q and q.tax_amount is not None else '0.00',
                 'shipping_charges': str(q.shipping_charges) if q and q.shipping_charges is not None else '0.00',
-                'quotation_document_url': (request.build_absolute_uri(q.quotation_document.url) if request else q.quotation_document.url) if (q and q.quotation_document) else None,
+                'quotation_document_url': (request.build_absolute_uri(f"/api/procurement/quotations/{q.id}/document/") if request else f"/api/procurement/quotations/{q.id}/document/") if (q and q.quotation_document) else None,
                 'lead_time_days': q.lead_time_days if q else None,
                 'valid_until': q.valid_until.isoformat() if q and q.valid_until else None,
                 'submission_date': q.submission_date.isoformat() if q and q.submission_date else None,

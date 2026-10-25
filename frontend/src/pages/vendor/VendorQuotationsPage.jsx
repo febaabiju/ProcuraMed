@@ -4,6 +4,7 @@ import axiosClient from '../../api/axiosClient';
 import VendorLayout from '../../components/layout/VendorLayout';
 import Button from '../../components/common/Button';
 import ViewQuotationModal from '../../components/vendor/ViewQuotationModal';
+import { openSecureDocument } from '../../utils/documentViewer';
 import {
   HiDocumentText,
   HiSearch,
@@ -352,15 +353,14 @@ const VendorQuotationsPage = () => {
                           </Button>
 
                           {(q.quotation_document_url || q.quotation_document) && (
-                            <a
-                              href={q.quotation_document_url || q.quotation_document}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition"
-                              title="Download Quotation Proposal"
+                            <button
+                              type="button"
+                              onClick={() => openSecureDocument(q.quotation_document_url || q.quotation_document, `Quotation_${q.quotation_number}.pdf`)}
+                              className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+                              title="Download Quotation Proposal PDF"
                             >
                               <HiExternalLink className="w-3.5 h-3.5" />
-                            </a>
+                            </button>
                           )}
                         </div>
                       </td>

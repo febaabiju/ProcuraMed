@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axiosClient from '../../api/axiosClient';
 import Button from '../common/Button';
+import { openSecureDocument } from '../../utils/documentViewer';
 import {
   HiX,
   HiCheckCircle,
@@ -349,16 +350,16 @@ const RFQTrackingModal = ({ isOpen, onClose, requisition, onRFQUpdated }) => {
                             </span>
                           ) : <span />}
                           {vendor.quotation_document_url && (
-                            <a
-                              href={vendor.quotation_document_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-violet-700 hover:text-violet-900 font-bold bg-violet-50 hover:bg-violet-100 px-2.5 py-1 rounded-lg border border-violet-200 transition"
+                            <button
+                              type="button"
+                              onClick={() => openSecureDocument(vendor.quotation_document_url, `Quotation_${vendor.quotation_number || vendor.vendor_name}.pdf`)}
+                              className="inline-flex items-center gap-1 text-violet-700 hover:text-violet-900 font-bold bg-violet-50 hover:bg-violet-100 px-2.5 py-1 rounded-lg border border-violet-200 transition cursor-pointer"
+                              title="Securely View Quotation PDF"
                             >
                               <HiDocumentText className="w-3.5 h-3.5" />
-                              <span>View Quotation Document</span>
+                              <span>View Quotation PDF</span>
                               <HiExternalLink className="w-3 h-3 ml-0.5" />
-                            </a>
+                            </button>
                           )}
                         </div>
                       </div>

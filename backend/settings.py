@@ -223,17 +223,32 @@ STATICFILES_DIRS = [
 ]
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-# WhiteNoise static files storage with compression and manifest caching
-if _has_whitenoise and not DEBUG:
-    STORAGES = {
-        "default": {
-            "BACKEND": "django.core.files.storage.FileSystemStorage",
-        },
-        "staticfiles": {
-            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
-        },
-    }
-    WHITENOISE_MANIFEST_STRICT = False
+# Storage Configuration (Supabase Storage for persistent cloud media files, with FileSystemStorage fallback)
+SUPABASE_URL = os.environ.get('SUPABASE_URL', '').strip().rstrip('/')
+SUPABASE_KEY = (os.environ.get('SUPABASE_SERVICE_ROLE_KEY', '') or os.environ.get('SUPABASE_KEY', '')).strip()
+SUPABASE_STORAGE_BUCKET = os.environ.get('SUPABASE_STORAGE_BUCKET', 'procuramed-documents').strip()
+
+default_storage_backend = (
+    "backend.storage.SupabaseStorage"
+    if (SUPABASE_URL and SUPABASE_KEY)
+    else "django.core.files.storage.FileSystemStorage"
+)
+
+staticfiles_storage_backend = (
+    "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    if (_has_whitenoise and not DEBUG)
+    else "django.contrib.staticfiles.storage.StaticFilesStorage"
+)
+
+STORAGES = {
+    "default": {
+        "BACKEND": default_storage_backend,
+    },
+    "staticfiles": {
+        "BACKEND": staticfiles_storage_backend,
+    },
+}
+WHITENOISE_MANIFEST_STRICT = False
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'

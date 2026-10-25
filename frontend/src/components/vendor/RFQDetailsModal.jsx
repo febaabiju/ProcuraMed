@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axiosClient from '../../api/axiosClient';
 import Button from '../common/Button';
+import { openSecureDocument } from '../../utils/documentViewer';
 import {
   HiX,
   HiClipboardList,
@@ -390,28 +391,26 @@ const RFQDetailsModal = ({
                   </span>
                   <div className="flex flex-wrap gap-2">
                     {req?.supporting_document && (
-                      <a
-                        href={req.supporting_document}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200 font-bold transition"
+                      <button
+                        type="button"
+                        onClick={() => openSecureDocument(req.supporting_document, `Requisition_${req.req_number || 'Specs'}.pdf`)}
+                        className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200 font-bold transition cursor-pointer"
                       >
                         <HiDocumentText className="w-4 h-4 text-violet-600" />
                         <span>Requisition Supporting Document</span>
                         <HiExternalLink className="w-3.5 h-3.5 text-violet-400" />
-                      </a>
+                      </button>
                     )}
                     {req?.technical_evaluation_report && (
-                      <a
-                        href={req.technical_evaluation_report}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 font-bold transition"
+                      <button
+                        type="button"
+                        onClick={() => openSecureDocument(req.technical_evaluation_report, `TechnicalEvaluation_${req.req_number || 'Report'}.pdf`)}
+                        className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 font-bold transition cursor-pointer"
                       >
                         <HiDocumentText className="w-4 h-4 text-purple-600" />
                         <span>Technical Evaluation Specifications</span>
                         <HiExternalLink className="w-3.5 h-3.5 text-purple-400" />
-                      </a>
+                      </button>
                     )}
                   </div>
                 </div>

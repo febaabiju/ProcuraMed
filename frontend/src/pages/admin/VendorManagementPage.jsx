@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import axiosClient from '../../api/axiosClient';
 import AdminLayout from '../../components/layout/AdminLayout';
 import Button from '../../components/common/Button';
+import { openSecureDocument } from '../../utils/documentViewer';
 import {
   HiOfficeBuilding,
   HiSearch,
@@ -535,14 +536,16 @@ const VendorManagementPage = () => {
                           {(selectedVendor.certificate_file || selectedVendor.application_details?.certificate_file).split('/').pop()}
                         </span>
                       </div>
-                      <a
-                        href={getCertificateUrl(selectedVendor.certificate_file || selectedVendor.application_details?.certificate_file)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-1.5 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-700 font-bold text-xs inline-flex items-center gap-1.5 transition-colors border border-violet-200 flex-shrink-0"
+                      <button
+                        type="button"
+                        onClick={() => openSecureDocument(
+                          `/api/vendors/${selectedVendor.id}/certificate/`,
+                          `Certificate_${selectedVendor.company_name}.pdf`
+                        )}
+                        className="px-3 py-1.5 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-700 font-bold text-xs inline-flex items-center gap-1.5 transition-colors border border-violet-200 flex-shrink-0 cursor-pointer"
                       >
                         <HiExternalLink className="w-3.5 h-3.5" /> View Certificate
-                      </a>
+                      </button>
                     </div>
                   </div>
                 )}

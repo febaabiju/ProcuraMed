@@ -98,9 +98,70 @@ class VendorApplicationViewSet(viewsets.ModelViewSet):
     ordering = ['id']
 
     def get_permissions(self):
-        if self.action in ['create']:
+        if self.action in ['create', 'certificate']:
             return [AllowAny()]
         return [IsAdminRole()]
+
+    @action(detail=True, methods=['get'], url_path='certificate', permission_classes=[AllowAny])
+    def certificate(self, request, pk=None):
+        try:
+            application = VendorApplication.objects.get(pk=pk)
+        except VendorApplication.DoesNotExist:
+            from django.http import Http404
+            raise Http404("Vendor application not found.")
+
+        from backend.views import authenticate_media_request, generate_fallback_pdf
+        user = authenticate_media_request(request)
+        if not user:
+            from django.http import HttpResponse
+            return HttpResponse("Authentication required to view certificate.", status=401)
+
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin_or_super = user.is_superuser or user.is_staff or 'admin' in role_name
+        is_internal = any(r in role_name for r in ['committee', 'purchase', 'technical'])
+        is_owner = (
+            (application.email and user.email and application.email.lower() == user.email.lower()) or
+            (hasattr(user, 'vendor_profile') and getattr(user.vendor_profile, 'application_id', None) == application.id)
+        )
+
+        if not (is_admin_or_super or is_internal or is_owner):
+            from django.http import HttpResponseForbidden
+            return HttpResponseForbidden("You do not have permission to access this registration certificate.")
+
+        if not application.certificate_file:
+            from django.http import Http404
+            raise Http404("No certificate file attached to this application.")
+
+        from django.http import FileResponse
+        from django.conf import settings
+        import os
+        import io
+        import mimetypes
+
+        doc_file = application.certificate_file
+        filename = os.path.basename(doc_file.name)
+        content_type, _ = mimetypes.guess_type(filename)
+        if not content_type:
+            content_type = 'application/pdf'
+
+        try:
+            if doc_file.storage.exists(doc_file.name):
+                response = FileResponse(doc_file.open('rb'), content_type=content_type, as_attachment=False)
+                response['Content-Disposition'] = f'inline; filename="{filename}"'
+                return response
+        except Exception:
+            pass
+
+        local_path = os.path.join(str(settings.MEDIA_ROOT), doc_file.name)
+        if os.path.exists(local_path) and os.path.isfile(local_path):
+            response = FileResponse(open(local_path, 'rb'), content_type=content_type, as_attachment=False)
+            response['Content-Disposition'] = f'inline; filename="{filename}"'
+            return response
+
+        pdf_bytes = generate_fallback_pdf(filename, f"Registration Certificate - {application.company_name}")
+        response = FileResponse(io.BytesIO(pdf_bytes), content_type='application/pdf', as_attachment=False)
+        response['Content-Disposition'] = f'inline; filename="{filename}"'
+        return response
 
     @action(detail=True, methods=['post'], permission_classes=[IsAdminRole])
     def approve(self, request, pk=None):
@@ -398,6 +459,73 @@ class VendorViewSet(viewsets.ModelViewSet):
             )
         # If user is vendor, filter to own profile
         return Vendor.objects.filter(user=user)
+
+    def get_permissions(self):
+        if self.action == 'certificate':
+            return [AllowAny()]
+        return super().get_permissions()
+
+    @action(detail=True, methods=['get'], url_path='certificate', permission_classes=[AllowAny])
+    def certificate(self, request, pk=None):
+        try:
+            vendor = Vendor.objects.select_related('application', 'user').get(pk=pk)
+        except Vendor.DoesNotExist:
+            from django.http import Http404
+            raise Http404("Vendor not found.")
+
+        from backend.views import authenticate_media_request, generate_fallback_pdf
+        user = authenticate_media_request(request)
+        if not user:
+            from django.http import HttpResponse
+            return HttpResponse("Authentication required to view certificate.", status=401)
+
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin_or_super = user.is_superuser or user.is_staff or 'admin' in role_name
+        is_internal = any(r in role_name for r in ['committee', 'purchase', 'technical'])
+        is_owner = (
+            vendor.user == user or
+            (hasattr(user, 'vendor_profile') and user.vendor_profile == vendor) or
+            (vendor.email and user.email and vendor.email.lower() == user.email.lower())
+        )
+
+        if not (is_admin_or_super or is_internal or is_owner):
+            from django.http import HttpResponseForbidden
+            return HttpResponseForbidden("You do not have permission to access this registration certificate.")
+
+        doc_file = vendor.certificate_file or (vendor.application.certificate_file if vendor.application else None)
+        if not doc_file:
+            from django.http import Http404
+            raise Http404("No certificate file attached to this vendor.")
+
+        from django.http import FileResponse
+        from django.conf import settings
+        import os
+        import io
+        import mimetypes
+
+        filename = os.path.basename(doc_file.name)
+        content_type, _ = mimetypes.guess_type(filename)
+        if not content_type:
+            content_type = 'application/pdf'
+
+        try:
+            if doc_file.storage.exists(doc_file.name):
+                response = FileResponse(doc_file.open('rb'), content_type=content_type, as_attachment=False)
+                response['Content-Disposition'] = f'inline; filename="{filename}"'
+                return response
+        except Exception:
+            pass
+
+        local_path = os.path.join(str(settings.MEDIA_ROOT), doc_file.name)
+        if os.path.exists(local_path) and os.path.isfile(local_path):
+            response = FileResponse(open(local_path, 'rb'), content_type=content_type, as_attachment=False)
+            response['Content-Disposition'] = f'inline; filename="{filename}"'
+            return response
+
+        pdf_bytes = generate_fallback_pdf(filename, f"Registration Certificate - {vendor.company_name}")
+        response = FileResponse(io.BytesIO(pdf_bytes), content_type='application/pdf', as_attachment=False)
+        response['Content-Disposition'] = f'inline; filename="{filename}"'
+        return response
 
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def my_profile(self, request):

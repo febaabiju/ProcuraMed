@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import Button from '../common/Button';
+import { openSecureDocument } from '../../utils/documentViewer';
 import {
   HiX,
   HiDocumentText,
@@ -248,15 +249,14 @@ const ViewQuotationModal = ({ isOpen, onClose, quotation }) => {
                   </span>
                 </div>
               </div>
-              <a
-                href={quotation.quotation_document_url || quotation.quotation_document}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs shadow-xs transition"
+              <button
+                type="button"
+                onClick={() => openSecureDocument(quotation.quotation_document_url || quotation.quotation_document, `Quotation_${quotation.quotation_number}.pdf`)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs shadow-xs transition cursor-pointer"
               >
                 <span>View Attachment</span>
                 <HiExternalLink className="w-3.5 h-3.5" />
-              </a>
+              </button>
             </div>
           )}
         </div>

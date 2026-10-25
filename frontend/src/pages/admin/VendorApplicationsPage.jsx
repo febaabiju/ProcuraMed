@@ -3,6 +3,7 @@ import axiosClient from '../../api/axiosClient';
 import AdminLayout from '../../components/layout/AdminLayout';
 import Button from '../../components/common/Button';
 import InputField from '../../components/common/InputField';
+import { openSecureDocument } from '../../utils/documentViewer';
 import {
   HiClipboardList,
   HiCheckCircle,
@@ -733,14 +734,16 @@ const VendorApplicationsPage = () => {
                         </p>
                       </div>
                     </div>
-                    <a
-                      href={getCertificateUrl(selectedApp.certificate_file)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-3.5 py-1.5 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-700 font-bold text-xs inline-flex items-center gap-1.5 transition-colors border border-violet-200"
+                    <button
+                      type="button"
+                      onClick={() => openSecureDocument(
+                        `/api/vendors/applications/${selectedApp.id}/certificate/`,
+                        `Certificate_${selectedApp.company_name}.pdf`
+                      )}
+                      className="px-3.5 py-1.5 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-700 font-bold text-xs inline-flex items-center gap-1.5 transition-colors border border-violet-200 cursor-pointer"
                     >
                       <HiExternalLink className="w-3.5 h-3.5" /> View Certificate
-                    </a>
+                    </button>
                   </div>
                 ) : (
                   <p className="text-slate-400 italic py-1">No registration certificate file uploaded by vendor.</p>

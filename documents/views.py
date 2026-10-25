@@ -21,16 +21,70 @@ class DocumentViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(uploaded_by=self.request.user)
 
+    def get_permissions(self):
+        if self.action in ['download', 'preview']:
+            return []
+        return super().get_permissions()
+
     @action(detail=True, methods=['get'])
     def download(self, request, pk=None):
+        from backend.views import authenticate_media_request, generate_fallback_pdf
+        import os, io, mimetypes
+        user = authenticate_media_request(request)
+        if not user:
+            from django.http import HttpResponse
+            return HttpResponse("Authentication required.", status=401)
+
         document = self.get_object()
-        if not document.file or not document.file.storage.exists(document.file.name):
-            raise Http404("Requested file does not exist on storage.")
-        return FileResponse(document.file.open(), as_attachment=True, filename=document.file.name.split('/')[-1])
+        # Permission check
+        if not (user.is_superuser or user.is_staff or document.uploaded_by == user):
+            from django.http import HttpResponseForbidden
+            return HttpResponseForbidden("Permission denied.")
+
+        filename = os.path.basename(document.file.name) if document.file else f"{document.document_number}.pdf"
+        if document.file:
+            try:
+                if document.file.storage.exists(document.file.name):
+                    return FileResponse(document.file.open(), as_attachment=True, filename=filename)
+            except Exception:
+                pass
+            from django.conf import settings
+            local_path = os.path.join(str(settings.MEDIA_ROOT), document.file.name)
+            if os.path.exists(local_path) and os.path.isfile(local_path):
+                return FileResponse(open(local_path, 'rb'), as_attachment=True, filename=filename)
+
+        pdf_bytes = generate_fallback_pdf(filename, f"Document {document.document_number} - {document.title}")
+        return FileResponse(io.BytesIO(pdf_bytes), as_attachment=True, filename=filename)
 
     @action(detail=True, methods=['get'])
     def preview(self, request, pk=None):
+        from backend.views import authenticate_media_request, generate_fallback_pdf
+        import os, io, mimetypes
+        user = authenticate_media_request(request)
+        if not user:
+            from django.http import HttpResponse
+            return HttpResponse("Authentication required.", status=401)
+
         document = self.get_object()
-        if not document.file or not document.file.storage.exists(document.file.name):
-            raise Http404("Requested file does not exist on storage.")
-        return FileResponse(document.file.open(), as_attachment=False)
+        if not (user.is_superuser or user.is_staff or document.uploaded_by == user):
+            from django.http import HttpResponseForbidden
+            return HttpResponseForbidden("Permission denied.")
+
+        filename = os.path.basename(document.file.name) if document.file else f"{document.document_number}.pdf"
+        content_type, _ = mimetypes.guess_type(filename)
+        if not content_type:
+            content_type = 'application/pdf'
+
+        if document.file:
+            try:
+                if document.file.storage.exists(document.file.name):
+                    return FileResponse(document.file.open(), as_attachment=False, content_type=content_type)
+            except Exception:
+                pass
+            from django.conf import settings
+            local_path = os.path.join(str(settings.MEDIA_ROOT), document.file.name)
+            if os.path.exists(local_path) and os.path.isfile(local_path):
+                return FileResponse(open(local_path, 'rb'), as_attachment=False, content_type=content_type)
+
+        pdf_bytes = generate_fallback_pdf(filename, f"Document {document.document_number} - {document.title}")
+        return FileResponse(io.BytesIO(pdf_bytes), as_attachment=False, content_type='application/pdf')

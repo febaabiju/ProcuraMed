@@ -47,7 +47,12 @@ data_backup*.json
 *.dump.*
 
 # Django Static & Media
-media/
+media/*
+!media/requisitions/
+!media/requisitions/**
+!media/vendor_certificates/
+!media/vendor_certificates/**
+!media/.gitkeep
 uploads/
 staticfiles/
 *.log

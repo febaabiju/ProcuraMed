@@ -100,13 +100,39 @@ const SubmitQuotationModal = ({
     }).format(val || 0);
   };
 
+  const hasExistingDoc = Boolean(
+    rfq?.my_quotation?.quotation_document ||
+    rfq?.my_quotation?.quotation_document_url ||
+    rfq?.existing_quotation?.quotation_document ||
+    rfq?.existing_quotation?.quotation_document_url
+  );
+
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 15 * 1024 * 1024) {
-        setError('Attachment size cannot exceed 15MB.');
+      // Validate PDF format strictly: reject DOC, DOCX, images, etc.
+      const isPdf = file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf';
+      if (!isPdf) {
+        setError('Invalid file format. Only PDF documents (.pdf) are accepted. DOC, DOCX, images, and other formats are rejected.');
+        setQuotationDocument(null);
+        if (e.target) e.target.value = '';
         return;
       }
+
+      if (file.size > 15 * 1024 * 1024) {
+        setError('Quotation PDF file size cannot exceed 15MB.');
+        setQuotationDocument(null);
+        if (e.target) e.target.value = '';
+        return;
+      }
+
+      if (file.size === 0) {
+        setError('The selected PDF file is empty. Please choose a valid quotation document.');
+        setQuotationDocument(null);
+        if (e.target) e.target.value = '';
+        return;
+      }
+
       setQuotationDocument(file);
       setError('');
     }
@@ -142,6 +168,12 @@ const SubmitQuotationModal = ({
     const todayStr = new Date().toISOString().split('T')[0];
     if (validUntil < todayStr) {
       setError('Quotation validity date must be in the future.');
+      return;
+    }
+
+    // Quotation PDF document is MANDATORY
+    if (!quotationDocument && !hasExistingDoc) {
+      setError('Official quotation document is mandatory. Please upload a PDF file (.pdf).');
       return;
     }
 
@@ -442,27 +474,32 @@ const SubmitQuotationModal = ({
             </div>
 
             <div>
-              <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">
-                Upload Quotation Proposal / Specification Sheet (Optional)
+              <label className="text-[10px] uppercase font-bold text-slate-700 block mb-1 flex items-center justify-between">
+                <span>
+                  Quotation Proposal Document (PDF) <span className="text-rose-600 font-extrabold">* Required</span>
+                </span>
+                <span className="text-[10px] text-violet-600 font-bold lowercase">
+                  PDF format only
+                </span>
               </label>
-              <div className="p-3 rounded-xl border-2 border-dashed border-slate-200 hover:border-violet-300 transition bg-slate-50/50 flex items-center justify-between gap-3">
+              <div className={`p-3 rounded-xl border-2 border-dashed ${quotationDocument ? 'border-violet-500 bg-violet-50/40' : 'border-slate-300 bg-slate-50/50 hover:border-violet-300'} transition flex items-center justify-between gap-3`}>
                 <div className="flex items-center gap-2.5 truncate">
-                  <HiDocumentText className="w-5 h-5 text-violet-500 flex-shrink-0" />
+                  <HiDocumentText className={`w-5 h-5 ${quotationDocument ? 'text-violet-600' : 'text-slate-400'} flex-shrink-0`} />
                   <div className="truncate">
                     <span className="font-bold text-slate-800 block text-xs truncate">
-                      {quotationDocument ? quotationDocument.name : 'Attach official quotation document'}
+                      {quotationDocument ? quotationDocument.name : (hasExistingDoc ? 'Existing Quotation PDF attached (Upload new to replace)' : 'Attach official quotation document (PDF)')}
                     </span>
-                    <span className="text-[10px] text-slate-400 block">
-                      PDF, DOC, DOCX or image (Max 15MB)
+                    <span className="text-[10px] text-slate-500 block">
+                      Strictly PDF documents only (.pdf) &bull; Maximum file size: 15MB
                     </span>
                   </div>
                 </div>
 
-                <label className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-violet-700 hover:bg-violet-50 font-bold text-xs cursor-pointer shadow-xs flex-shrink-0">
-                  <span>Browse</span>
+                <label className="px-3.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs cursor-pointer shadow-xs flex-shrink-0 transition flex items-center gap-1.5">
+                  <span>{quotationDocument ? 'Change PDF' : 'Upload PDF'}</span>
                   <input
                     type="file"
-                    accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                    accept=".pdf,application/pdf"
                     onChange={handleFileChange}
                     className="hidden"
                   />
