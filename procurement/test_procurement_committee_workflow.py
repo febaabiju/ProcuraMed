@@ -1,10 +1,16 @@
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.utils import timezone
+from datetime import timedelta
 from rest_framework.test import APIClient
 from rest_framework import status
 from decimal import Decimal
 from accounts.models import Role, Department, AuditLog
-from procurement.models import Requisition, RequisitionItem, TechnicalEvaluation, Approval
+from procurement.models import (
+    Requisition, RequisitionItem, TechnicalEvaluation, Approval,
+    QuotationRequest, Quotation, RFQVendorInvitation
+)
+from vendors.models import Vendor, SupplierCategory
 
 User = get_user_model()
 
@@ -487,4 +493,454 @@ class ProcurementCommitteeWorkflowTests(TestCase):
         dash_res = self.client.get('/api/procurement/committee-dashboard/')
         returned_numbers = [r['req_number'] for r in dash_res.data.get('returned_clarifications', [])]
         self.assertIn('REQ-TEST-NONTECH-03', returned_numbers)
+
+    def test_assigned_request_remains_visible_during_vendor_sourcing_until_status_changes(self):
+        """
+        Verify that opening a request and searching for vendors:
+        1. Keeps the requisition in pending_reviews (Assigned Requests) without disappearing.
+        2. Status remains PENDING_COMMITTEE_REVIEW until genuinely changed.
+        3. When an RFQ is issued or approved, it transitions correctly to the next stage.
+        """
+        self.client.force_authenticate(user=self.committee_user)
+
+        # 1. Check initially present in pending_reviews
+        dash_res = self.client.get('/api/procurement/committee-dashboard/')
+        pending_nums = [r['req_number'] for r in dash_res.data.get('pending_reviews', [])]
+        self.assertIn('REQ-TEST-PC-001', pending_nums)
+
+        # 2. Perform vendor search
+        vendor_res = self.client.get(f'/api/procurement/requisitions/{self.req_technically_approved.id}/find-vendors/')
+        self.assertEqual(vendor_res.status_code, status.HTTP_200_OK)
+
+        # 3. Verify request is STILL in pending_reviews after vendor search
+        dash_res2 = self.client.get('/api/procurement/committee-dashboard/')
+        pending_nums2 = [r['req_number'] for r in dash_res2.data.get('pending_reviews', [])]
+        self.assertIn('REQ-TEST-PC-001', pending_nums2)
+
+        # Verify DB status unchanged
+        self.req_technically_approved.refresh_from_db()
+        self.assertEqual(self.req_technically_approved.status, Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW)
+
+        # 4. Genuinely change status by approving
+        app_res = self.client.post(
+            f'/api/procurement/requisitions/{self.req_technically_approved.id}/approve/',
+            {'comments': 'Approved for hospital supply.'},
+            format='json'
+        )
+        self.assertEqual(app_res.status_code, status.HTTP_200_OK)
+
+        # 5. After genuine status change, verify it moves to approved_requests (Approved & Sourcing)
+        dash_res3 = self.client.get('/api/procurement/committee-dashboard/')
+        pending_nums3 = [r['req_number'] for r in dash_res3.data.get('pending_reviews', [])]
+        self.assertNotIn('REQ-TEST-PC-001', pending_nums3)
+
+        approved_nums3 = [r['req_number'] for r in dash_res3.data.get('approved_requests', [])]
+        self.assertIn('REQ-TEST-PC-001', approved_nums3)
+
+    def _create_category_and_vendors(self, count=4):
+        cat, _ = SupplierCategory.objects.get_or_create(
+            name='Medical Equipment & Devices',
+            defaults={'description': 'Medical equipment category'}
+        )
+        vendors = []
+        for i in range(1, count + 1):
+            v, _ = Vendor.objects.get_or_create(
+                company_name=f'MedTech Supplier {i} Pvt Ltd',
+                defaults={
+                    'email': f'contact{i}@medtechsupplier{i}.com',
+                    'phone': f'+91 987654321{i}',
+                    'contact_person': f'Manager {i}',
+                    'status': Vendor.StatusChoices.ACTIVE,
+                    'is_active': True
+                }
+            )
+            v.supplier_categories.add(cat)
+            vendors.append(v)
+        return cat, vendors
+
+    def test_rfq_creation_allows_2_to_4_vendors_and_sets_awaiting_quotations_status(self):
+        """
+        Requirements 1 & 3:
+        1. Committee must be able to select and send RFQs to 2-4 eligible vendors.
+        2. Reject <2 vendors if >=2 available, reject >4 vendors.
+        3. After issuing RFQs, requisition status is RFQ_ISSUED ('Awaiting Quotations').
+        """
+        self.client.force_authenticate(user=self.committee_user)
+        cat, vendors = self._create_category_and_vendors(5)
+
+        req = Requisition.objects.create(
+            req_number='REQ-MULTI-VENDOR-01',
+            title='Procurement of Patient Monitors',
+            department=self.dept,
+            requested_by=self.staff_user,
+            assigned_committee_member=self.committee_user,
+            status=Requisition.StatusChoices.APPROVED,
+            category=cat.name,
+            estimated_budget=Decimal('150000.00'),
+            requires_technical_evaluation=False
+        )
+
+        rfq_url = '/api/procurement/rfqs/'
+        future_due_date = (timezone.now() + timedelta(days=14)).date().isoformat()
+
+        # Attempt 1: Only 1 vendor when 5 available -> Should fail (minimum 2 required)
+        res_fail_1 = self.client.post(rfq_url, {
+            'requisition_id': req.id,
+            'title': 'RFQ for Patient Monitors',
+            'due_date': future_due_date,
+            'vendor_ids': [vendors[0].id]
+        }, format='json')
+        self.assertEqual(res_fail_1.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('vendor_ids', res_fail_1.data)
+
+        # Attempt 2: 5 vendors -> Should fail (maximum 4 allowed)
+        res_fail_5 = self.client.post(rfq_url, {
+            'requisition_id': req.id,
+            'title': 'RFQ for Patient Monitors',
+            'due_date': future_due_date,
+            'vendor_ids': [v.id for v in vendors[:5]]
+        }, format='json')
+        self.assertEqual(res_fail_5.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('vendor_ids', res_fail_5.data)
+
+        # Attempt 3: Exactly 3 vendors (within 2 to 4 range) -> Should succeed!
+        selected_3 = vendors[:3]
+        res_success = self.client.post(rfq_url, {
+            'requisition_id': req.id,
+            'title': 'RFQ for Patient Monitors',
+            'due_date': future_due_date,
+            'vendor_ids': [v.id for v in selected_3],
+            'delivery_requirements': '14 days delivery to Central Stores.'
+        }, format='json')
+        self.assertEqual(res_success.status_code, status.HTTP_201_CREATED)
+
+        # Verify DB records
+        rfq_data = res_success.data['rfq']
+        self.assertEqual(rfq_data['invited_vendors_count'], 3)
+        self.assertEqual(len(rfq_data['vendor_invitations']), 3)
+
+        # Requisition status must transition to RFQ_ISSUED ('Awaiting Quotations')
+        req.refresh_from_db()
+        self.assertEqual(req.status, Requisition.StatusChoices.RFQ_ISSUED)
+        self.assertEqual(req.get_status_display(), 'Awaiting Quotations')
+
+        # Serializer workflow status should report AWAITING_QUOTATIONS
+        self.assertEqual(rfq_data['quotation_workflow_status'], 'AWAITING_QUOTATIONS')
+        self.assertIn('Awaiting Quotations', rfq_data['quotation_workflow_status_display'])
+
+        # Verify individual invitations created in INVITED status
+        invitations = RFQVendorInvitation.objects.filter(quotation_request_id=rfq_data['id'])
+        self.assertEqual(invitations.count(), 3)
+        for inv in invitations:
+            self.assertEqual(inv.status, RFQVendorInvitation.InvitationStatus.INVITED)
+
+    def test_quotation_workflow_vendor_wise_tracking_and_status_transitions(self):
+        """
+        Requirements 2, 3, 4:
+        1. Sending RFQ to multiple vendors does not complete the process.
+        2. Receiving 1 vendor quotation updates requisition to 'Quotations Received' (QUOTATIONS_RECEIVED),
+           updates that vendor's status to QUOTED, while keeping other vendors as 'Awaiting Quotation'.
+        3. Quotation stage completes only when a quotation is accepted.
+        """
+        self.client.force_authenticate(user=self.committee_user)
+        cat, vendors = self._create_category_and_vendors(3)
+
+        req = Requisition.objects.create(
+            req_number='REQ-MULTI-VENDOR-02',
+            title='Procurement of Defibrillators',
+            department=self.dept,
+            requested_by=self.staff_user,
+            assigned_committee_member=self.committee_user,
+            status=Requisition.StatusChoices.APPROVED,
+            category=cat.name,
+            estimated_budget=Decimal('200000.00'),
+            requires_technical_evaluation=False
+        )
+
+        future_due_date = (timezone.now() + timedelta(days=14)).date().isoformat()
+        rfq_res = self.client.post('/api/procurement/rfqs/', {
+            'requisition_id': req.id,
+            'title': 'RFQ for Defibrillators',
+            'due_date': future_due_date,
+            'vendor_ids': [v.id for v in vendors]
+        }, format='json')
+        self.assertEqual(rfq_res.status_code, status.HTTP_201_CREATED)
+        rfq_id = rfq_res.data['rfq']['id']
+
+        # Status is RFQ_ISSUED ('Awaiting Quotations')
+        req.refresh_from_db()
+        self.assertEqual(req.status, Requisition.StatusChoices.RFQ_ISSUED)
+        self.assertEqual(req.get_status_display(), 'Awaiting Quotations')
+
+        # Step 1: Vendor 1 submits a quotation
+        q1_res = self.client.post('/api/procurement/quotations/', {
+            'quotation_request': rfq_id,
+            'vendor': vendors[0].id,
+            'total_amount': '195000.00',
+            'lead_time_days': 10,
+            'remarks': 'Includes warranty and delivery.'
+        }, format='json')
+        self.assertEqual(q1_res.status_code, status.HTTP_201_CREATED)
+        q1_id = q1_res.data['id']
+
+        # Requisition status must transition to QUOTATIONS_RECEIVED ('Quotations Received')
+        req.refresh_from_db()
+        self.assertEqual(req.status, Requisition.StatusChoices.QUOTATIONS_RECEIVED)
+        self.assertEqual(req.get_status_display(), 'Quotations Received')
+
+        # Check vendor-wise tracking on the RFQ detail endpoint
+        rfq_detail_res = self.client.get(f'/api/procurement/rfqs/{rfq_id}/')
+        self.assertEqual(rfq_detail_res.status_code, status.HTTP_200_OK)
+        vt = rfq_detail_res.data['vendor_tracking']
+        self.assertEqual(len(vt), 3)
+
+        # Vendor 1 should be QUOTED with quotation details
+        v1_track = next(v for v in vt if v['vendor_id'] == vendors[0].id)
+        self.assertTrue(v1_track['has_quoted'])
+        self.assertEqual(v1_track['invitation_status'], 'QUOTED')
+        self.assertEqual(v1_track['quotation_status'], 'SUBMITTED')
+        self.assertEqual(Decimal(v1_track['total_amount']), Decimal('195000.00'))
+
+        # Vendor 2 & 3 must still be Awaiting Quotation
+        v2_track = next(v for v in vt if v['vendor_id'] == vendors[1].id)
+        self.assertFalse(v2_track['has_quoted'])
+        self.assertEqual(v2_track['invitation_status'], 'INVITED')
+        self.assertEqual(v2_track['quotation_status_display'], 'Awaiting Quotation')
+
+        v3_track = next(v for v in vt if v['vendor_id'] == vendors[2].id)
+        self.assertFalse(v3_track['has_quoted'])
+        self.assertEqual(v3_track['invitation_status'], 'INVITED')
+
+        # Step 2: Vendor 2 submits a quotation via record-quotation endpoint
+        record_res = self.client.post(f'/api/procurement/rfqs/{rfq_id}/record-quotation/', {
+            'vendor_id': vendors[1].id,
+            'total_amount': '180000.00',
+            'lead_time_days': 7,
+            'remarks': 'Fast delivery within 7 days.'
+        }, format='json')
+        self.assertEqual(record_res.status_code, status.HTTP_201_CREATED)
+        q2_id = record_res.data['quotation']['id']
+
+        # Verify Vendor 2 is now quoted
+        inv2 = RFQVendorInvitation.objects.get(quotation_request_id=rfq_id, vendor=vendors[1])
+        self.assertEqual(inv2.status, RFQVendorInvitation.InvitationStatus.QUOTED)
+
+        # Step 3: Committee accepts Vendor 2's quotation
+        accept_res = self.client.post(f'/api/procurement/quotations/{q2_id}/accept/', format='json')
+        self.assertEqual(accept_res.status_code, status.HTTP_200_OK)
+
+        # Verify Vendor 2 quotation is ACCEPTED
+        q2 = Quotation.objects.get(id=q2_id)
+        self.assertEqual(q2.status, Quotation.StatusChoices.ACCEPTED)
+
+        # Verify Vendor 1 competing quotation is REJECTED
+        q1 = Quotation.objects.get(id=q1_id)
+        self.assertEqual(q1.status, Quotation.StatusChoices.REJECTED)
+
+        # Verify RFQ is CLOSED and Requisition is COMPLETED (quotation stage fulfilled)
+        rfq_obj = QuotationRequest.objects.get(id=rfq_id)
+        self.assertEqual(rfq_obj.status, QuotationRequest.StatusChoices.CLOSED)
+
+        req.refresh_from_db()
+        self.assertEqual(req.status, Requisition.StatusChoices.COMPLETED)
+
+    def _create_test_requisition(self, title, category, budget, status, req_number=None):
+        import uuid
+        if not req_number:
+            req_number = f"REQ-TEST-{uuid.uuid4().hex[:8].upper()}"
+        req = Requisition.objects.create(
+            req_number=req_number,
+            title=title,
+            department=self.dept,
+            requested_by=self.staff_user,
+            assigned_committee_member=self.committee_user,
+            assigned_purchase_officer=self.po_user,
+            status=status,
+            category=category,
+            estimated_budget=budget,
+            requires_technical_evaluation=False
+        )
+        RequisitionItem.objects.create(
+            requisition=req,
+            item_name=f"{title} Item",
+            category=category,
+            quantity=2,
+            specifications="Hospital grade",
+            estimated_unit_price=budget / Decimal('2.00'),
+            total_price=budget
+        )
+        return req
+
+    def test_my_assigned_requests_remain_visible_across_all_stages(self):
+        """
+        Verify that all requisitions assigned to the logged-in committee member
+        remain visible in assigned_requests across all workflow stages (Requirement 1, 2, 5).
+        """
+        self.client.force_authenticate(user=self.committee_user)
+
+        # 1. Newly Assigned request
+        req_newly = self._create_test_requisition(
+            title='Cardiac Monitoring System',
+            category='Biomedical Equipment',
+            budget=Decimal('250000.00'),
+            status=Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW
+        )
+
+        # 2. Approved for Vendor Sourcing request
+        req_sourcing = self._create_test_requisition(
+            title='Sterilization Autoclave Units',
+            category='Medical Consumables',
+            budget=Decimal('120000.00'),
+            status=Requisition.StatusChoices.APPROVED
+        )
+
+        # 3. RFQ Issued / Awaiting Quotations request
+        req_rfq = self._create_test_requisition(
+            title='Diagnostic Ultrasound Probes',
+            category='Biomedical Equipment',
+            budget=Decimal('180000.00'),
+            status=Requisition.StatusChoices.RFQ_ISSUED
+        )
+
+        # 4. Quotations Received request
+        req_quotes = self._create_test_requisition(
+            title='Surgical Gloves Bulk Order',
+            category='Medical Consumables',
+            budget=Decimal('50000.00'),
+            status=Requisition.StatusChoices.QUOTATIONS_RECEIVED
+        )
+
+        # 5. Completed request
+        req_completed = self._create_test_requisition(
+            title='Patient Beds Delivery Complete',
+            category='Hospital Furniture',
+            budget=Decimal('90000.00'),
+            status=Requisition.StatusChoices.COMPLETED
+        )
+
+        # Call committee dashboard endpoint
+        res = self.client.get('/api/procurement/committee-dashboard/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        data = res.data
+        self.assertIn('assigned_requests', data)
+        assigned_reqs = data['assigned_requests']
+        assigned_ids = [r['id'] for r in assigned_reqs]
+
+        # Requirement 1: All active and in-progress requests MUST be present (none disappear)
+        self.assertIn(req_newly.id, assigned_ids)
+        self.assertIn(req_sourcing.id, assigned_ids)
+        self.assertIn(req_rfq.id, assigned_ids)
+        self.assertIn(req_quotes.id, assigned_ids)
+        self.assertIn(req_completed.id, assigned_ids)
+
+        # Requirement 2: Categorization by stage
+        item_newly = next(r for r in assigned_reqs if r['id'] == req_newly.id)
+        self.assertEqual(item_newly['stage_key'], 'NEWLY_ASSIGNED')
+        self.assertTrue(item_newly['action_required'])
+        self.assertTrue(item_newly['is_active'])
+
+        item_sourcing = next(r for r in assigned_reqs if r['id'] == req_sourcing.id)
+        self.assertEqual(item_sourcing['stage_key'], 'VENDOR_SOURCING')
+        self.assertTrue(item_sourcing['is_active'])
+
+        item_rfq = next(r for r in assigned_reqs if r['id'] == req_rfq.id)
+        self.assertEqual(item_rfq['stage_key'], 'AWAITING_QUOTATIONS')
+        self.assertTrue(item_rfq['is_active'])
+
+        item_quotes = next(r for r in assigned_reqs if r['id'] == req_quotes.id)
+        self.assertEqual(item_quotes['stage_key'], 'QUOTATION_REVIEW')
+        self.assertTrue(item_quotes['action_required'])
+        self.assertTrue(item_quotes['is_active'])
+
+        item_completed = next(r for r in assigned_reqs if r['id'] == req_completed.id)
+        self.assertEqual(item_completed['stage_key'], 'COMPLETED')
+        self.assertFalse(item_completed['is_active'])
+
+        # Requirement 5: Data consistency between dashboard stats and assigned_requests
+        stats = data['stats']
+        self.assertEqual(stats['total_assigned'], len(assigned_reqs))
+        self.assertGreaterEqual(stats['active_assigned'], 4)
+        self.assertGreaterEqual(stats['newly_assigned'], 1)
+        self.assertGreaterEqual(stats['vendor_sourcing'], 1)
+        self.assertGreaterEqual(stats['awaiting_quotations'], 1)
+        self.assertGreaterEqual(stats['quotation_review'], 1)
+
+    def test_request_lifecycle_persists_in_assigned_queue_across_all_stage_transitions(self):
+        """
+        Verify that as a single requisition progresses through each stage:
+        PENDING_COMMITTEE_REVIEW -> APPROVED -> RFQ_ISSUED -> QUOTATIONS_RECEIVED -> COMPLETED,
+        it remains continuously visible in assigned_requests and properly categorized at each step.
+        """
+        self.client.force_authenticate(user=self.committee_user)
+
+        # Prepare vendors
+        cat, vendors = self._create_category_and_vendors(2)
+
+        # Stage 1: Newly Assigned
+        req = self._create_test_requisition(
+            title='Endoscopy Video Tower Unit',
+            category=cat.name,
+            budget=Decimal('350000.00'),
+            status=Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW
+        )
+
+        res1 = self.client.get('/api/procurement/committee-dashboard/')
+        assigned1 = next(r for r in res1.data['assigned_requests'] if r['id'] == req.id)
+        self.assertEqual(assigned1['stage_key'], 'NEWLY_ASSIGNED')
+        self.assertTrue(assigned1['action_required'])
+
+        # Stage 2: Committee Approval
+        req.status = Requisition.StatusChoices.APPROVED
+        req.save()
+
+        res2 = self.client.get('/api/procurement/committee-dashboard/')
+        assigned2 = next(r for r in res2.data['assigned_requests'] if r['id'] == req.id)
+        self.assertEqual(assigned2['stage_key'], 'VENDOR_SOURCING')
+        self.assertTrue(assigned2['is_active'])
+
+        # Stage 3: RFQ issued to 2 vendors (Previously disappeared here!)
+        rfq_res = self.client.post('/api/procurement/rfqs/', {
+            'requisition_id': req.id,
+            'title': 'RFQ for Endoscopy Tower',
+            'due_date': (timezone.now() + timedelta(days=10)).strftime('%Y-%m-%d'),
+            'vendor_ids': [v.id for v in vendors]
+        }, format='json')
+        self.assertEqual(rfq_res.status_code, status.HTTP_201_CREATED)
+        rfq_id = rfq_res.data['rfq']['id']
+
+        res3 = self.client.get('/api/procurement/committee-dashboard/')
+        assigned3 = next(r for r in res3.data['assigned_requests'] if r['id'] == req.id)
+        self.assertEqual(assigned3['stage_key'], 'AWAITING_QUOTATIONS')
+        self.assertEqual(assigned3['status'], 'RFQ_ISSUED')
+        self.assertTrue(assigned3['is_active'])
+        self.assertIsNotNone(assigned3['linked_rfq'])
+
+        # Stage 4: Quotation recorded from vendor 1
+        quote_res = self.client.post(f'/api/procurement/rfqs/{rfq_id}/record-quotation/', {
+            'vendor_id': vendors[0].id,
+            'total_amount': '330000.00',
+            'lead_time_days': 10,
+            'remarks': 'Complete endoscopy tower setup.'
+        }, format='json')
+        self.assertEqual(quote_res.status_code, status.HTTP_201_CREATED)
+        quote_id = quote_res.data['quotation']['id']
+
+        res4 = self.client.get('/api/procurement/committee-dashboard/')
+        assigned4 = next(r for r in res4.data['assigned_requests'] if r['id'] == req.id)
+        self.assertEqual(assigned4['stage_key'], 'QUOTATION_REVIEW')
+        self.assertEqual(assigned4['status'], 'QUOTATIONS_RECEIVED')
+        self.assertTrue(assigned4['action_required'])
+
+        # Stage 5: Quotation accepted by committee
+        accept_res = self.client.post(f'/api/procurement/quotations/{quote_id}/accept/', format='json')
+        self.assertEqual(accept_res.status_code, status.HTTP_200_OK)
+
+        res5 = self.client.get('/api/procurement/committee-dashboard/')
+        assigned5 = next(r for r in res5.data['assigned_requests'] if r['id'] == req.id)
+        self.assertEqual(assigned5['stage_key'], 'COMPLETED')
+        self.assertEqual(assigned5['status'], 'COMPLETED')
+        self.assertFalse(assigned5['is_active'])
+
+
 

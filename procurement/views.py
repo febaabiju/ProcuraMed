@@ -1272,9 +1272,16 @@ class QuotationRequestViewSet(viewsets.ModelViewSet):
             return Response({'due_date': 'Quotation submission deadline must be a future date.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Vendor IDs
-        vendor_ids = data.get('vendor_ids', [])
-        if not vendor_ids or not isinstance(vendor_ids, list):
-            return Response({'vendor_ids': 'At least one eligible vendor must be selected.'}, status=status.HTTP_400_BAD_REQUEST)
+        raw_vendor_ids = data.get('vendor_ids', [])
+        if not raw_vendor_ids or not isinstance(raw_vendor_ids, list):
+            return Response({'vendor_ids': 'At least one eligible vendor must be selected (2 to 4 recommended).'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Deduplicate while preserving order
+        vendor_ids = list(dict.fromkeys(raw_vendor_ids))
+
+        # Enforce maximum 4 vendors
+        if len(vendor_ids) > 4:
+            return Response({'vendor_ids': 'A maximum of 4 vendors can be selected for an RFQ.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Collect requisition categories
         match_categories = set()
@@ -1290,32 +1297,47 @@ class QuotationRequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Backend vendor validation
+        # Check total active matching vendors available for competitive quotation
         from vendors.models import Vendor
+        all_active_vendors = list(Vendor.objects.filter(
+            is_active=True,
+            status=Vendor.StatusChoices.ACTIVE
+        ).prefetch_related('supplier_categories', 'application__supplier_categories'))
+
+        matching_vendors_dict = {}
+        for cand in all_active_vendors:
+            c_cats = set(c.name.strip().lower() for c in cand.supplier_categories.all() if c.name)
+            if cand.application:
+                for ac in cand.application.supplier_categories.all():
+                    if ac.name:
+                        c_cats.add(ac.name.strip().lower())
+            if match_categories.intersection(c_cats):
+                matching_vendors_dict[cand.id] = cand
+
+        min_required = 2 if len(matching_vendors_dict) >= 2 else 1
+        if len(vendor_ids) < min_required:
+            return Response(
+                {'vendor_ids': f'Competitive hospital procurement requires selecting between 2 and 4 eligible vendors (minimum {min_required} required).'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Backend vendor validation
         validated_vendors = []
         for vid in vendor_ids:
-            vendor = Vendor.objects.filter(
-                id=vid,
-                is_active=True,
-                status=Vendor.StatusChoices.ACTIVE
-            ).prefetch_related('supplier_categories', 'application__supplier_categories').first()
+            try:
+                vid_int = int(vid)
+            except (ValueError, TypeError):
+                return Response({'vendor_ids': f'Invalid vendor ID: {vid}'}, status=status.HTTP_400_BAD_REQUEST)
 
+            vendor = matching_vendors_dict.get(vid_int)
             if not vendor:
+                v_obj = Vendor.objects.filter(id=vid_int).first()
+                if not v_obj:
+                    return Response({'vendor_ids': f'Vendor ID {vid} does not exist.'}, status=status.HTTP_400_BAD_REQUEST)
+                if not v_obj.is_active or v_obj.status != Vendor.StatusChoices.ACTIVE:
+                    return Response({'vendor_ids': f"Vendor '{v_obj.company_name}' is not currently active."}, status=status.HTTP_400_BAD_REQUEST)
                 return Response(
-                    {'vendor_ids': f'Vendor ID {vid} is either inactive, unapproved, or does not exist.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # Check category matching
-            vendor_cats = set(c.name.strip().lower() for c in vendor.supplier_categories.all() if c.name)
-            if vendor.application:
-                for ac in vendor.application.supplier_categories.all():
-                    if ac.name:
-                        vendor_cats.add(ac.name.strip().lower())
-
-            if not match_categories.intersection(vendor_cats):
-                return Response(
-                    {'vendor_ids': f"Vendor '{vendor.company_name}' does not supply the category for this purchase request and cannot be invited."},
+                    {'vendor_ids': f"Vendor '{v_obj.company_name}' does not supply the category for this purchase request and cannot be invited."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
@@ -1403,7 +1425,7 @@ class QuotationRequestViewSet(viewsets.ModelViewSet):
                         estimated_unit_price=requisition.estimated_budget or 0.00
                     )
 
-            # Update requisition status to RFQ_ISSUED
+            # Update requisition status to RFQ_ISSUED (Awaiting Quotations)
             if requisition.status != Requisition.StatusChoices.RFQ_ISSUED:
                 requisition.status = Requisition.StatusChoices.RFQ_ISSUED
                 requisition.save(update_fields=['status', 'updated_at'])
@@ -1425,6 +1447,147 @@ class QuotationRequestViewSet(viewsets.ModelViewSet):
         return Response({
             'message': f"RFQ {rfq.rfq_number} created and recorded successfully for {len(validated_vendors)} invited vendor(s).",
             'rfq': serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='invite-vendor', permission_classes=[IsAuthenticated])
+    def invite_vendor(self, request, pk=None):
+        """
+        Invite an additional vendor to an open RFQ (up to 4 vendors total).
+        """
+        rfq = self.get_object()
+        user = request.user
+        is_admin = (
+            user.is_superuser or
+            user.is_staff or
+            (hasattr(user, 'role') and user.role and user.role.name.lower() in ['admin', 'superadmin'])
+        )
+        if not is_admin and rfq.created_by_id and rfq.created_by_id != user.id:
+            if not (rfq.requisition and rfq.requisition.assigned_committee_member_id == user.id):
+                return Response({'detail': 'You are not authorized to invite vendors for this RFQ.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if rfq.status not in [QuotationRequest.StatusChoices.OPEN, QuotationRequest.StatusChoices.SENT]:
+            return Response({'detail': f'Cannot invite vendors to an RFQ in status {rfq.get_status_display()}.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        current_count = rfq.vendor_invitations.count()
+        if current_count >= 4:
+            return Response({'detail': 'This RFQ has already reached the maximum limit of 4 invited vendors.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        vendor_id = request.data.get('vendor_id')
+        if not vendor_id:
+            return Response({'vendor_id': 'Vendor ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from vendors.models import Vendor
+        vendor = Vendor.objects.filter(id=vendor_id, is_active=True, status=Vendor.StatusChoices.ACTIVE).prefetch_related('supplier_categories', 'application__supplier_categories').first()
+        if not vendor:
+            return Response({'vendor_id': 'Vendor not found or inactive.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if RFQVendorInvitation.objects.filter(quotation_request=rfq, vendor=vendor).exists():
+            return Response({'vendor_id': f"Vendor '{vendor.company_name}' has already been invited to this RFQ."}, status=status.HTTP_400_BAD_REQUEST)
+
+        inv = RFQVendorInvitation.objects.create(
+            quotation_request=rfq,
+            vendor=vendor,
+            invited_by=user,
+            status=RFQVendorInvitation.InvitationStatus.INVITED,
+            notes=request.data.get('notes', '')
+        )
+
+        AuditLog.objects.create(
+            user=user,
+            action='Vendor Invited to RFQ',
+            module='Procurement Committee',
+            description=f"Added vendor '{vendor.company_name}' to RFQ {rfq.rfq_number}."
+        )
+
+        return Response({
+            'message': f"Vendor '{vendor.company_name}' has been successfully invited.",
+            'rfq': QuotationRequestSerializer(rfq, context={'request': request}).data
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='record-quotation', permission_classes=[IsAuthenticated])
+    def record_quotation(self, request, pk=None):
+        """
+        Record a formal quotation from an invited vendor for this RFQ.
+        Updates vendor invitation status to QUOTED and transitions requisition status to QUOTATIONS_RECEIVED.
+        """
+        rfq = self.get_object()
+        user = request.user
+        vendor_id = request.data.get('vendor_id')
+        if not vendor_id:
+            return Response({'vendor_id': 'Vendor ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        invitation = RFQVendorInvitation.objects.filter(quotation_request=rfq, vendor_id=vendor_id).first()
+        if not invitation:
+            return Response({'vendor_id': 'The specified vendor was not invited to this RFQ.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        total_amount = request.data.get('total_amount')
+        if total_amount is None:
+            return Response({'total_amount': 'Total quotation amount is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            total_amount = float(total_amount)
+            if total_amount < 0:
+                raise ValueError()
+        except (ValueError, TypeError):
+            return Response({'total_amount': 'Invalid total amount.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        lead_time_days = request.data.get('lead_time_days')
+        if lead_time_days is not None:
+            try:
+                lead_time_days = int(lead_time_days)
+            except (ValueError, TypeError):
+                lead_time_days = None
+
+        remarks = request.data.get('remarks', '')
+        valid_until = request.data.get('valid_until') or None
+
+        with transaction.atomic():
+            quotation, created = Quotation.objects.update_or_create(
+                quotation_request=rfq,
+                vendor_id=vendor_id,
+                defaults={
+                    'total_amount': total_amount,
+                    'lead_time_days': lead_time_days,
+                    'remarks': remarks,
+                    'valid_until': valid_until,
+                    'status': Quotation.StatusChoices.SUBMITTED,
+                }
+            )
+
+            # Update invitation status
+            invitation.status = RFQVendorInvitation.InvitationStatus.QUOTED
+            invitation.save(update_fields=['status'])
+
+            # If items provided, record them
+            items_data = request.data.get('items', [])
+            if items_data and isinstance(items_data, list):
+                quotation.items.all().delete()
+                for it in items_data:
+                    QuotationItem.objects.create(
+                        quotation=quotation,
+                        item_name=it.get('item_name') or 'Procurement Item',
+                        specification=it.get('specification') or '',
+                        quantity=int(it.get('quantity') or 1),
+                        unit_price=float(it.get('unit_price') or total_amount)
+                    )
+
+            # Transition requisition status from RFQ_ISSUED to QUOTATIONS_RECEIVED
+            req = rfq.requisition
+            if req and req.status == Requisition.StatusChoices.RFQ_ISSUED:
+                req.status = Requisition.StatusChoices.QUOTATIONS_RECEIVED
+                req.save(update_fields=['status', 'updated_at'])
+
+            AuditLog.objects.create(
+                user=user,
+                action='Quotation Recorded',
+                module='Procurement Committee',
+                description=f"Recorded quotation {quotation.quotation_number} from vendor '{invitation.vendor.company_name}' for RFQ {rfq.rfq_number}."
+            )
+
+        return Response({
+            'message': f"Quotation recorded successfully for {invitation.vendor.company_name}.",
+            'quotation': QuotationSerializer(quotation, context={'request': request}).data,
+            'rfq': QuotationRequestSerializer(rfq, context={'request': request}).data
         }, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'], url_path='cancel', permission_classes=[IsAuthenticated])
@@ -1512,6 +1675,20 @@ class QuotationViewSet(viewsets.ModelViewSet):
     filterset_class = QuotationFilter
     search_fields = ['quotation_number', 'remarks']
 
+    def perform_create(self, serializer):
+        quotation = serializer.save()
+        rfq = quotation.quotation_request
+        if rfq:
+            RFQVendorInvitation.objects.filter(
+                quotation_request=rfq,
+                vendor=quotation.vendor
+            ).update(status=RFQVendorInvitation.InvitationStatus.QUOTED)
+
+            req = rfq.requisition
+            if req and req.status == Requisition.StatusChoices.RFQ_ISSUED:
+                req.status = Requisition.StatusChoices.QUOTATIONS_RECEIVED
+                req.save(update_fields=['status', 'updated_at'])
+
     @action(detail=True, methods=['post'])
     def add_item(self, request, pk=None):
         quotation = self.get_object()
@@ -1524,6 +1701,70 @@ class QuotationViewSet(viewsets.ModelViewSet):
             quotation.save()
             return Response(QuotationSerializer(quotation).data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'], url_path='accept', permission_classes=[IsAuthenticated])
+    def accept(self, request, pk=None):
+        quotation = self.get_object()
+        rfq = quotation.quotation_request
+        user = request.user
+
+        with transaction.atomic():
+            quotation.status = Quotation.StatusChoices.ACCEPTED
+            quotation.save(update_fields=['status', 'updated_at'])
+
+            # Reject other competing quotations for this RFQ
+            competing = Quotation.objects.filter(quotation_request=rfq).exclude(id=quotation.id)
+            competing.update(status=Quotation.StatusChoices.REJECTED)
+
+            # Close RFQ
+            if rfq:
+                rfq.status = QuotationRequest.StatusChoices.CLOSED
+                rfq.save(update_fields=['status', 'updated_at'])
+
+                # Complete requisition quotation stage
+                req = rfq.requisition
+                if req:
+                    req.status = Requisition.StatusChoices.COMPLETED
+                    req.save(update_fields=['status', 'updated_at'])
+
+            AuditLog.objects.create(
+                user=user,
+                action='Quotation Accepted',
+                module='Procurement Committee',
+                description=(
+                    f"Procurement Committee accepted quotation {quotation.quotation_number} "
+                    f"from vendor '{quotation.vendor.company_name}' (Total: ₹{quotation.total_amount}) "
+                    f"for RFQ {rfq.rfq_number if rfq else 'N/A'}. Quotation stage completed."
+                )
+            )
+
+        return Response({
+            'message': f"Quotation {quotation.quotation_number} accepted successfully. Quotation stage completed.",
+            'quotation': QuotationSerializer(quotation, context={'request': request}).data,
+            'rfq': QuotationRequestSerializer(rfq, context={'request': request}).data if rfq else None
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='reject', permission_classes=[IsAuthenticated])
+    def reject(self, request, pk=None):
+        quotation = self.get_object()
+        user = request.user
+        reason = request.data.get('reason', 'Quotation evaluated and rejected by Procurement Committee.')
+
+        quotation.status = Quotation.StatusChoices.REJECTED
+        quotation.remarks = f"{quotation.remarks or ''}\n[Rejected: {reason}]".strip()
+        quotation.save(update_fields=['status', 'remarks', 'updated_at'])
+
+        AuditLog.objects.create(
+            user=user,
+            action='Quotation Rejected',
+            module='Procurement Committee',
+            description=f"Quotation {quotation.quotation_number} from vendor '{quotation.vendor.company_name}' rejected by @{user.username}."
+        )
+
+        return Response({
+            'message': f"Quotation {quotation.quotation_number} has been rejected.",
+            'quotation': QuotationSerializer(quotation, context={'request': request}).data
+        }, status=status.HTTP_200_OK)
 
 
 class PurchaseOrderViewSet(viewsets.ModelViewSet):
@@ -1586,7 +1827,7 @@ class DepartmentStaffDashboardView(APIView):
                 Requisition.StatusChoices.PENDING_APPROVAL
             ]
         ).count()
-        approved_requests = user_reqs.filter(status__in=['APPROVED', 'RFQ_ISSUED']).count()
+        approved_requests = user_reqs.filter(status__in=['APPROVED', 'RFQ_ISSUED', 'QUOTATIONS_RECEIVED']).count()
         completed_requests = user_reqs.filter(status='COMPLETED').count()
 
         # Recent purchase requests (latest 10)
@@ -1642,7 +1883,7 @@ class DepartmentStaffDashboardView(APIView):
         pipeline = {
             'submitted': submitted_requests + pending_requests,
             'under_review': under_review_requests,
-            'procurement': user_reqs.filter(status='RFQ_ISSUED').count(),
+            'procurement': user_reqs.filter(status__in=['RFQ_ISSUED', 'QUOTATIONS_RECEIVED']).count(),
             'approved': user_reqs.filter(status='APPROVED').count(),
             'completed': completed_requests,
         }
@@ -1711,7 +1952,7 @@ class PurchaseOfficerDashboardView(APIView):
             status__in=[
                 Requisition.StatusChoices.PENDING_TECHNICAL_EVALUATION,
                 Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW,
-                'UNDER_REVIEW', 'RFQ_ISSUED', 'PENDING_APPROVAL'
+                'UNDER_REVIEW', 'RFQ_ISSUED', 'QUOTATIONS_RECEIVED', 'PENDING_APPROVAL'
             ]
         ).count()
         quotation_requests_count = QuotationRequest.objects.filter(requisition__in=assigned_reqs_base, status='OPEN').count()
@@ -2016,11 +2257,27 @@ class ProcurementCommitteeDashboardView(APIView):
 
         # Requests in purchasing/sourcing stages assigned to this committee member
         approved_requests_qs = Requisition.objects.filter(
-            status__in=[Requisition.StatusChoices.APPROVED, Requisition.StatusChoices.RFQ_ISSUED, Requisition.StatusChoices.COMPLETED],
+            status__in=[
+                Requisition.StatusChoices.APPROVED,
+                Requisition.StatusChoices.RFQ_ISSUED,
+                Requisition.StatusChoices.QUOTATIONS_RECEIVED,
+                Requisition.StatusChoices.COMPLETED
+            ],
             assigned_committee_member=user
         ).select_related(
             'department', 'requested_by', 'assigned_technical_officer', 'assigned_purchase_officer', 'assigned_committee_member', 'reviewed_by'
         ).prefetch_related('items', 'technical_evaluations', 'approvals').order_by('-reviewed_at', '-updated_at')
+
+        # ALL requisitions assigned to this committee member across all stages (ensures nothing disappears)
+        all_assigned_qs = Requisition.objects.filter(
+            assigned_committee_member=user
+        ).select_related(
+            'department', 'requested_by', 'assigned_technical_officer', 'assigned_purchase_officer', 'assigned_committee_member', 'reviewed_by'
+        ).prefetch_related(
+            'items', 'technical_evaluations', 'approvals', 'quotation_requests',
+            'quotation_requests__vendor_invitations', 'quotation_requests__vendor_invitations__vendor',
+            'quotation_requests__quotations'
+        ).order_by('-updated_at', '-created_at')
 
         # Requests returned for clarification by the committee (separate section)
         committee_returned_req_ids = Approval.objects.filter(
@@ -2099,17 +2356,29 @@ class ProcurementCommitteeDashboardView(APIView):
             assigned_committee_member=user,
             status=Requisition.StatusChoices.COMPLETED
         ).count()
-        my_total_count = Requisition.objects.filter(assigned_committee_member=user).count()
+        my_total_count = all_assigned_qs.count()
+        my_active_count = all_assigned_qs.exclude(
+            status__in=[Requisition.StatusChoices.COMPLETED, Requisition.StatusChoices.CANCELLED, Requisition.StatusChoices.REJECTED]
+        ).count()
+        newly_assigned_count = all_assigned_qs.filter(status=Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW).count()
+        vendor_sourcing_count = all_assigned_qs.filter(status=Requisition.StatusChoices.APPROVED).count()
+        awaiting_quotes_count = all_assigned_qs.filter(status=Requisition.StatusChoices.RFQ_ISSUED).count()
+        quotes_review_count = all_assigned_qs.filter(status=Requisition.StatusChoices.QUOTATIONS_RECEIVED).count()
 
         # 2. Statistics
         stats = {
+            'total_assigned': my_total_count,
+            'active_assigned': my_active_count,
+            'newly_assigned': newly_assigned_count,
+            'vendor_sourcing': vendor_sourcing_count,
+            'awaiting_quotations': awaiting_quotes_count,
+            'quotation_review': quotes_review_count,
+            'completed_purchases': my_completed_count,
             'pending_committee_reviews': pending_count,
             'under_review': pending_count,
-            'my_assigned_requests': pending_count,
+            'my_assigned_requests': my_total_count,
             'approved_cases': approved_count,
-            'active_sourcing': approved_count,
-            'completed_purchases': my_completed_count,
-            'total_assigned': my_total_count,
+            'active_sourcing': approved_requests_qs.filter(status__in=[Requisition.StatusChoices.APPROVED, Requisition.StatusChoices.RFQ_ISSUED, Requisition.StatusChoices.QUOTATIONS_RECEIVED]).count(),
             'returned_clarifications': returned_count,
             'total_decisions': len(decision_history),
             'rejected_cases': 0,
@@ -2192,6 +2461,64 @@ class ProcurementCommitteeDashboardView(APIView):
                 status=Approval.StatusChoices.RETURNED
             ).order_by('-created_at').first()
 
+            # Stage categorization and action determinations (Requirement 1, 2, 3)
+            status_code = req.status
+            stage_key = 'OTHER'
+            workflow_stage_display = req.get_status_display()
+            action_required = False
+            action_label = 'View Details'
+
+            if status_code == Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW:
+                stage_key = 'NEWLY_ASSIGNED'
+                workflow_stage_display = 'Newly Assigned (Pending Sanction)'
+                action_required = True
+                action_label = 'Review & Decide'
+            elif status_code == Requisition.StatusChoices.APPROVED:
+                stage_key = 'VENDOR_SOURCING'
+                workflow_stage_display = 'Vendor Sourcing (Approved)'
+                action_required = True
+                action_label = 'Find Vendors & Quote'
+            elif status_code == Requisition.StatusChoices.RFQ_ISSUED:
+                stage_key = 'AWAITING_QUOTATIONS'
+                workflow_stage_display = 'RFQ Sent (Awaiting Quotations)'
+                action_required = False
+                action_label = 'Track Quotations'
+            elif status_code == Requisition.StatusChoices.QUOTATIONS_RECEIVED:
+                stage_key = 'QUOTATION_REVIEW'
+                workflow_stage_display = 'Quotation Review (Quotes Received)'
+                action_required = True
+                action_label = 'Review & Award'
+            elif status_code == Requisition.StatusChoices.COMPLETED:
+                stage_key = 'COMPLETED'
+                workflow_stage_display = 'Completed / Closed'
+                action_required = False
+                action_label = 'View Summary'
+            elif status_code == Requisition.StatusChoices.RETURNED:
+                stage_key = 'RETURNED'
+                workflow_stage_display = 'Returned for Clarification'
+                action_required = False
+                action_label = 'Inspect Return'
+            elif status_code in [Requisition.StatusChoices.CANCELLED, Requisition.StatusChoices.REJECTED]:
+                stage_key = 'CANCELLED'
+                workflow_stage_display = 'Cancelled / Rejected'
+                action_required = False
+                action_label = 'View Record'
+
+            # Linked RFQ data if present
+            latest_rfq = req.quotation_requests.order_by('-created_at').first()
+            linked_rfq = None
+            if latest_rfq:
+                linked_rfq = {
+                    'id': latest_rfq.id,
+                    'rfq_number': latest_rfq.rfq_number,
+                    'title': latest_rfq.title,
+                    'status': latest_rfq.status,
+                    'status_display': latest_rfq.get_status_display(),
+                    'due_date': latest_rfq.due_date.isoformat() if latest_rfq.due_date else None,
+                    'invited_vendors_count': latest_rfq.vendor_invitations.count(),
+                    'quotations_count': latest_rfq.quotations.count(),
+                }
+
             return {
                 'id': req.id,
                 'req_number': req.req_number,
@@ -2206,6 +2533,12 @@ class ProcurementCommitteeDashboardView(APIView):
                 'priority': req.priority,
                 'status': req.status,
                 'status_display': req.get_status_display(),
+                'stage_key': stage_key,
+                'workflow_stage_display': workflow_stage_display,
+                'action_required': action_required,
+                'action_label': action_label,
+                'is_active': status_code not in [Requisition.StatusChoices.COMPLETED, Requisition.StatusChoices.CANCELLED, Requisition.StatusChoices.REJECTED],
+                'linked_rfq': linked_rfq,
                 'submission_date': req.created_at.isoformat() if req.created_at else None,
                 'submitted_by_name': (req.requested_by.get_full_name() or req.requested_by.username) if req.requested_by else 'N/A',
                 'submitted_by_employee_id': req.requested_by.employee_id if req.requested_by else None,
@@ -2257,6 +2590,7 @@ class ProcurementCommitteeDashboardView(APIView):
             }
 
         # 4. Serialized Requisitions for all Committee Sections
+        assigned_requests = [serialize_req_for_committee(req) for req in all_assigned_qs]
         pending_reviews = [serialize_req_for_committee(req) for req in pending_reviews_qs]
         approved_requests = [serialize_req_for_committee(req) for req in approved_requests_qs]
         returned_clarifications = [serialize_req_for_committee(req) for req in returned_clarifications_qs]
@@ -2298,6 +2632,7 @@ class ProcurementCommitteeDashboardView(APIView):
             'user': user_info,
             'stats': stats,
             'pipeline': pipeline,
+            'assigned_requests': assigned_requests,
             'pending_reviews': pending_reviews,
             'approved_requests': approved_requests,
             'returned_clarifications': returned_clarifications,

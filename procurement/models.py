@@ -261,7 +261,8 @@ class Requisition(models.Model):
         PENDING_APPROVAL = 'PENDING_APPROVAL', 'Pending Approval'
         APPROVED = 'APPROVED', 'Committee Approved'
         REJECTED = 'REJECTED', 'Rejected'
-        RFQ_ISSUED = 'RFQ_ISSUED', 'RFQ Issued'
+        RFQ_ISSUED = 'RFQ_ISSUED', 'Awaiting Quotations'
+        QUOTATIONS_RECEIVED = 'QUOTATIONS_RECEIVED', 'Quotations Received'
         COMPLETED = 'COMPLETED', 'Completed'
         CANCELLED = 'CANCELLED', 'Cancelled'
 
@@ -660,6 +661,7 @@ class Requisition(models.Model):
             self.StatusChoices.PENDING_APPROVAL,
             self.StatusChoices.APPROVED,
             self.StatusChoices.RFQ_ISSUED,
+            self.StatusChoices.QUOTATIONS_RECEIVED,
             self.StatusChoices.REJECTED,
             self.StatusChoices.CANCELLED,
             self.StatusChoices.COMPLETED,

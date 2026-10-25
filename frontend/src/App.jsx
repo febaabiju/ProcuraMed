@@ -35,6 +35,7 @@ import PurchaseOfficerRequisitionsPage from './pages/purchaseOfficer/PurchaseOff
 import PurchaseOfficerPlaceholderPage from './pages/purchaseOfficer/PurchaseOfficerPlaceholderPage';
 import ProcurementCommitteeDashboardPage from './pages/committee/ProcurementCommitteeDashboardPage';
 import ProcurementCommitteeReviewsPage from './pages/committee/ProcurementCommitteeReviewsPage';
+import ProcurementCommitteeApprovedPage from './pages/committee/ProcurementCommitteeApprovedPage';
 import ProcurementCommitteeRFQsPage from './pages/committee/ProcurementCommitteeRFQsPage';
 import ProcurementCommitteeDecisionsPage from './pages/committee/ProcurementCommitteeDecisionsPage';
 import ProcurementCommitteeHistoryPage from './pages/committee/ProcurementCommitteeHistoryPage';
@@ -125,6 +126,14 @@ function App() {
             }
           />
           <Route
+            path="/committee/approved"
+            element={
+              <ProcurementCommitteeProtectedRoute>
+                <ProcurementCommitteeApprovedPage />
+              </ProcurementCommitteeProtectedRoute>
+            }
+          />
+          <Route
             path="/committee/rfqs"
             element={
               <ProcurementCommitteeProtectedRoute>
@@ -134,11 +143,19 @@ function App() {
           />
           <Route
             path="/committee/decisions"
-            element={<Navigate to="/committee/dashboard" replace />}
+            element={
+              <ProcurementCommitteeProtectedRoute>
+                <ProcurementCommitteeDecisionsPage />
+              </ProcurementCommitteeProtectedRoute>
+            }
           />
           <Route
             path="/committee/history"
-            element={<Navigate to="/committee/dashboard" replace />}
+            element={
+              <ProcurementCommitteeProtectedRoute>
+                <ProcurementCommitteeHistoryPage />
+              </ProcurementCommitteeProtectedRoute>
+            }
           />
           <Route
             path="/committee/notifications"

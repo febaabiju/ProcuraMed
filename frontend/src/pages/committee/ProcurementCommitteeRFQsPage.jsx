@@ -350,10 +350,26 @@ const ProcurementCommitteeRFQsPage = () => {
                           </span>
                         </td>
                         <td className="px-4 py-3.5 text-center whitespace-nowrap">
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-violet-50 text-violet-700 border border-violet-200">
-                            <HiOfficeBuilding className="w-3 h-3 text-violet-500" />
-                            <span>{vendorCount} Vendor(s)</span>
-                          </span>
+                          {(() => {
+                            const quotesCount = rfq.quotations_count ?? (rfq.quotations || []).length;
+                            return (
+                              <div className="flex flex-col items-center gap-1">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                  <HiOfficeBuilding className="w-3 h-3 text-slate-500" />
+                                  <span>{vendorCount} Invited</span>
+                                </span>
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                                  quotesCount === 0
+                                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                    : quotesCount >= vendorCount
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                }`}>
+                                  {quotesCount}/{vendorCount} Quoted
+                                </span>
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="px-4 py-3.5 whitespace-nowrap text-slate-600">
                           {formatDate(rfq.issue_date || rfq.created_at)}
@@ -375,27 +391,47 @@ const ProcurementCommitteeRFQsPage = () => {
                           </span>
                         </td>
                         <td className="px-4 py-3.5 whitespace-nowrap">
-                          {isCancelled ? (
-                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 inline-flex items-center gap-1">
-                              <HiBan className="w-3 h-3 text-rose-600" />
-                              Cancelled
-                            </span>
-                          ) : isExpired ? (
-                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 inline-flex items-center gap-1">
-                              <HiClock className="w-3 h-3 text-amber-600" />
-                              Expired
-                            </span>
-                          ) : isClosed ? (
-                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 inline-flex items-center gap-1">
-                              <HiCheckCircle className="w-3 h-3 text-slate-600" />
-                              Closed
-                            </span>
-                          ) : (
-                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 inline-flex items-center gap-1">
-                              <HiCheckCircle className="w-3 h-3 text-emerald-600" />
-                              Sent / Open
-                            </span>
-                          )}
+                          {(() => {
+                            const quotesCount = rfq.quotations_count ?? (rfq.quotations || []).length;
+                            if (isCancelled) {
+                              return (
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 inline-flex items-center gap-1">
+                                  <HiBan className="w-3 h-3 text-rose-600" />
+                                  Cancelled
+                                </span>
+                              );
+                            }
+                            if (rfq.has_accepted_quotation || isClosed) {
+                              return (
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 inline-flex items-center gap-1">
+                                  <HiCheckCircle className="w-3 h-3 text-emerald-600" />
+                                  Quotation Stage Complete
+                                </span>
+                              );
+                            }
+                            if (isExpired) {
+                              return (
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 inline-flex items-center gap-1">
+                                  <HiClock className="w-3 h-3 text-amber-600" />
+                                  Expired
+                                </span>
+                              );
+                            }
+                            if (quotesCount > 0) {
+                              return (
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 inline-flex items-center gap-1">
+                                  <HiCheckCircle className="w-3 h-3 text-indigo-600" />
+                                  Quotations Received ({quotesCount}/{vendorCount})
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 inline-flex items-center gap-1">
+                                <HiClock className="w-3 h-3 text-amber-600" />
+                                Awaiting Quotations
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="px-4 py-3.5 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">

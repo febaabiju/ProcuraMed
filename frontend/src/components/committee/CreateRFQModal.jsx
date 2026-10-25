@@ -88,7 +88,11 @@ const CreateRFQModal = ({
       return false;
     }
     if (recipients.length === 0) {
-      setError('At least one eligible vendor must be selected as a recipient.');
+      setError('Please select between 2 and 4 eligible vendors for competitive quotation.');
+      return false;
+    }
+    if (recipients.length > 4) {
+      setError('A maximum of 4 vendors can be selected for an RFQ.');
       return false;
     }
     setError('');
@@ -528,9 +532,9 @@ const CreateRFQModal = ({
                 <span className="text-slate-400 font-medium">Category:</span>
                 <span className="font-bold text-violet-700">{requisition.category}</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-slate-400 font-medium">Stage:</span>
-                <span className="font-bold text-emerald-700">RFQ Issued / Awaiting Quotes</span>
+                <span className="font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">Awaiting Quotations</span>
               </div>
             </div>
 

@@ -85,18 +85,30 @@ const VendorSourcingModal = ({
   };
 
   const toggleVendorSelect = (vendorId) => {
-    setSelectedVendorIds((prev) =>
-      prev.includes(vendorId) ? prev.filter((id) => id !== vendorId) : [...prev, vendorId]
-    );
+    setSelectedVendorIds((prev) => {
+      if (prev.includes(vendorId)) {
+        return prev.filter((id) => id !== vendorId);
+      }
+      if (prev.length >= 4) {
+        return prev;
+      }
+      return [...prev, vendorId];
+    });
   };
 
   const handleSelectAll = () => {
-    if (selectedVendorIds.length === displayedVendors.length && displayedVendors.length > 0) {
+    if (selectedVendorIds.length > 0) {
       setSelectedVendorIds([]);
     } else {
-      setSelectedVendorIds(displayedVendors.map((v) => v.id));
+      setSelectedVendorIds(displayedVendors.slice(0, 4).map((v) => v.id));
     }
   };
+
+  const minRequiredVendors = (data.matched_vendors || []).length < 2 ? 1 : 2;
+  const isSelectionValid =
+    (data.matched_vendors || []).length < 2
+      ? selectedVendorIds.length === 1
+      : selectedVendorIds.length >= 2 && selectedVendorIds.length <= 4;
 
   // Filter vendors based on search query (strictly within matching category vendors only)
   const displayedVendors = (data.matched_vendors || []).filter((v) => {
@@ -425,11 +437,17 @@ const VendorSourcingModal = ({
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                {selectedVendorIds.length > 0 && (
-                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-violet-100 text-violet-800 border border-violet-200">
-                    {selectedVendorIds.length} Selected for RFQ
-                  </span>
-                )}
+                <span
+                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
+                    isSelectionValid
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                      : selectedVendorIds.length > 0
+                      ? 'bg-amber-50 text-amber-800 border-amber-200'
+                      : 'bg-slate-100 text-slate-700 border-slate-200'
+                  }`}
+                >
+                  Selected: {selectedVendorIds.length}/4 (Requirement: {minRequiredVendors}–4 vendors)
+                </span>
                 <span className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1">
                   <HiShieldCheck className="w-4 h-4 text-emerald-600" />
                   Verified Category Suppliers
@@ -711,11 +729,11 @@ const VendorSourcingModal = ({
           <div className="text-[11px] text-slate-500">
             Requisition <strong className="text-slate-800">{requisition.req_number}</strong> •{' '}
             {selectedVendorIds.length > 0 ? (
-              <span className="font-bold text-violet-700">
-                {selectedVendorIds.length} eligible vendor(s) selected
+              <span className={`font-bold ${isSelectionValid ? 'text-emerald-700' : 'text-amber-700'}`}>
+                {selectedVendorIds.length} vendor(s) selected {isSelectionValid ? '✓ Ready to issue RFQ' : `(Select ${minRequiredVendors}–4 vendors for competitive quotations)`}
               </span>
             ) : (
-              <span>Select eligible vendor(s) using checkboxes to request quotation</span>
+              <span>Select {minRequiredVendors} to 4 eligible vendors to request competitive quotations</span>
             )}
           </div>
 
@@ -731,14 +749,18 @@ const VendorSourcingModal = ({
             <Button
               variant="primary"
               size="md"
-              disabled={selectedVendorIds.length === 0}
+              disabled={!isSelectionValid}
               onClick={() => setCreateRFQOpen(true)}
               className="text-xs font-bold flex items-center gap-1.5 shadow-sm shadow-violet-500/20"
-              title={selectedVendorIds.length === 0 ? 'Select at least one vendor to request quotation' : ''}
+              title={
+                !isSelectionValid
+                  ? `Please select between ${minRequiredVendors} and 4 eligible vendors to request quotations`
+                  : ''
+              }
             >
               <HiDocumentText className="w-4 h-4" />
               <span>
-                Request Quotation {selectedVendorIds.length > 0 ? `(${selectedVendorIds.length})` : ''}
+                Request Quotations ({selectedVendorIds.length})
               </span>
             </Button>
           </div>

@@ -464,15 +464,16 @@ class QuotationSerializer(serializers.ModelSerializer):
     )
     vendor_details = VendorSerializer(source='vendor', read_only=True)
     items = QuotationItemSerializer(many=True, read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
 
     class Meta:
         model = Quotation
         fields = [
             'id', 'quotation_number', 'quotation_request', 'vendor', 'vendor_details',
             'submission_date', 'valid_until', 'total_amount', 'lead_time_days',
-            'status', 'remarks', 'items', 'created_at', 'updated_at'
+            'status', 'status_display', 'remarks', 'items', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'quotation_number', 'total_amount', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'quotation_number', 'created_at', 'updated_at']
 
 
 class RFQItemSerializer(serializers.ModelSerializer):
@@ -490,12 +491,13 @@ class RFQItemSerializer(serializers.ModelSerializer):
 class RFQVendorInvitationSerializer(serializers.ModelSerializer):
     vendor_details = VendorSerializer(source='vendor', read_only=True)
     invited_by_name = serializers.SerializerMethodField()
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
 
     class Meta:
         model = RFQVendorInvitation
         fields = [
             'id', 'quotation_request', 'vendor', 'vendor_details',
-            'status', 'invited_at', 'invited_by', 'invited_by_name', 'notes'
+            'status', 'status_display', 'invited_at', 'invited_by', 'invited_by_name', 'notes'
         ]
         read_only_fields = ['id', 'invited_at']
 
@@ -515,6 +517,12 @@ class QuotationRequestSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     is_expired = serializers.SerializerMethodField()
     invited_vendors_count = serializers.SerializerMethodField()
+    quotations_count = serializers.SerializerMethodField()
+    quotation_workflow_status = serializers.SerializerMethodField()
+    quotation_workflow_status_display = serializers.SerializerMethodField()
+    has_accepted_quotation = serializers.SerializerMethodField()
+    winning_quotation_id = serializers.SerializerMethodField()
+    vendor_tracking = serializers.SerializerMethodField()
 
     class Meta:
         model = QuotationRequest
@@ -525,11 +533,16 @@ class QuotationRequestSerializer(serializers.ModelSerializer):
             'terms_and_conditions', 'status', 'status_display', 'is_expired',
             'cancellation_reason', 'cancelled_by', 'cancelled_by_details', 'cancelled_at',
             'items', 'vendor_invitations', 'invited_vendors_count',
-            'quotations', 'created_at', 'updated_at'
+            'quotations', 'quotations_count', 'quotation_workflow_status',
+            'quotation_workflow_status_display', 'has_accepted_quotation',
+            'winning_quotation_id', 'vendor_tracking',
+            'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'rfq_number', 'created_by', 'cancelled_by', 'cancelled_at',
-            'created_at', 'updated_at', 'status_display', 'is_expired', 'invited_vendors_count'
+            'created_at', 'updated_at', 'status_display', 'is_expired', 'invited_vendors_count',
+            'quotations_count', 'quotation_workflow_status', 'quotation_workflow_status_display',
+            'has_accepted_quotation', 'winning_quotation_id', 'vendor_tracking'
         ]
 
     def get_is_expired(self, obj):
@@ -540,6 +553,98 @@ class QuotationRequestSerializer(serializers.ModelSerializer):
 
     def get_invited_vendors_count(self, obj):
         return obj.vendor_invitations.count()
+
+    def get_quotations_count(self, obj):
+        return obj.quotations.count()
+
+    def get_quotation_workflow_status(self, obj):
+        if obj.status == QuotationRequest.StatusChoices.CANCELLED:
+            return 'CANCELLED'
+        if obj.status == QuotationRequest.StatusChoices.CLOSED:
+            return 'COMPLETED'
+        from django.utils import timezone
+        if obj.due_date and obj.due_date < timezone.now().date():
+            return 'EXPIRED'
+
+        has_accepted = obj.quotations.filter(status=Quotation.StatusChoices.ACCEPTED).exists()
+        if has_accepted:
+            return 'COMPLETED'
+
+        quoted_count = obj.quotations.count()
+        if quoted_count == 0:
+            return 'AWAITING_QUOTATIONS'
+        total_invited = obj.vendor_invitations.count()
+        if total_invited > 0 and quoted_count >= total_invited:
+            return 'ALL_QUOTATIONS_RECEIVED'
+        return 'QUOTATIONS_RECEIVED'
+
+    def get_quotation_workflow_status_display(self, obj):
+        wf = self.get_quotation_workflow_status(obj)
+        quoted_count = obj.quotations.count()
+        total_invited = obj.vendor_invitations.count()
+        if wf == 'CANCELLED':
+            return 'Cancelled'
+        if wf == 'EXPIRED':
+            return 'Expired'
+        if wf == 'COMPLETED':
+            return 'Quotation Stage Completed'
+        if wf == 'AWAITING_QUOTATIONS':
+            return f"Awaiting Quotations (0/{total_invited})"
+        if wf == 'ALL_QUOTATIONS_RECEIVED':
+            return f"All Quotations Received ({quoted_count}/{total_invited})"
+        return f"Quotations Received ({quoted_count}/{total_invited})"
+
+    def get_has_accepted_quotation(self, obj):
+        return obj.quotations.filter(status=Quotation.StatusChoices.ACCEPTED).exists()
+
+    def get_winning_quotation_id(self, obj):
+        accepted = obj.quotations.filter(status=Quotation.StatusChoices.ACCEPTED).first()
+        return accepted.id if accepted else None
+
+    def get_vendor_tracking(self, obj):
+        tracking = []
+        invitations = obj.vendor_invitations.select_related('vendor', 'invited_by').all()
+        quotations_by_vendor = {
+            q.vendor_id: q for q in obj.quotations.select_related('vendor').prefetch_related('items').all()
+        }
+        for inv in invitations:
+            v = inv.vendor
+            q = quotations_by_vendor.get(v.id)
+            cats = [c.name for c in v.supplier_categories.all() if c.name]
+            tracking.append({
+                'invitation_id': inv.id,
+                'vendor_id': v.id,
+                'vendor_code': v.vendor_code or f"VEN-2026-{v.id:05d}",
+                'company_name': v.company_name or v.name,
+                'contact_person': v.contact_person or 'Representative',
+                'email': v.email or 'N/A',
+                'phone': v.phone or 'N/A',
+                'categories': cats,
+                'invitation_status': inv.status,
+                'invitation_status_display': inv.get_status_display(),
+                'invited_at': inv.invited_at.isoformat() if inv.invited_at else None,
+                'has_quoted': q is not None,
+                'quotation_id': q.id if q else None,
+                'quotation_number': q.quotation_number if q else None,
+                'quotation_status': q.status if q else 'PENDING',
+                'quotation_status_display': q.get_status_display() if q else 'Awaiting Quotation',
+                'total_amount': str(q.total_amount) if q else None,
+                'lead_time_days': q.lead_time_days if q else None,
+                'valid_until': q.valid_until.isoformat() if q and q.valid_until else None,
+                'submission_date': q.submission_date.isoformat() if q and q.submission_date else None,
+                'remarks': q.remarks if q else None,
+                'items': [
+                    {
+                        'id': qi.id,
+                        'item_name': qi.item_name,
+                        'quantity': qi.quantity,
+                        'unit_price': str(qi.unit_price),
+                        'total_price': str(qi.total_price),
+                        'specification': qi.specification,
+                    } for qi in q.items.all()
+                ] if q else []
+            })
+        return tracking
 
 
 class PurchaseOrderItemSerializer(serializers.ModelSerializer):
