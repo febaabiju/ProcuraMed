@@ -34,11 +34,6 @@ import PurchaseOfficerDashboardPage from './pages/purchaseOfficer/PurchaseOffice
 import PurchaseOfficerRequisitionsPage from './pages/purchaseOfficer/PurchaseOfficerRequisitionsPage';
 import PurchaseOfficerPlaceholderPage from './pages/purchaseOfficer/PurchaseOfficerPlaceholderPage';
 import ProcurementCommitteeDashboardPage from './pages/committee/ProcurementCommitteeDashboardPage';
-import ProcurementCommitteeReviewsPage from './pages/committee/ProcurementCommitteeReviewsPage';
-import ProcurementCommitteeApprovedPage from './pages/committee/ProcurementCommitteeApprovedPage';
-import ProcurementCommitteeRFQsPage from './pages/committee/ProcurementCommitteeRFQsPage';
-import ProcurementCommitteeDecisionsPage from './pages/committee/ProcurementCommitteeDecisionsPage';
-import ProcurementCommitteeHistoryPage from './pages/committee/ProcurementCommitteeHistoryPage';
 import ProcurementCommitteeNotificationsPage from './pages/committee/ProcurementCommitteeNotificationsPage';
 import ProcurementCommitteeProfilePage from './pages/committee/ProcurementCommitteeProfilePage';
 import TechnicalOfficerDashboardPage from './pages/technicalOfficer/TechnicalOfficerDashboardPage';
@@ -116,46 +111,6 @@ function App() {
           <Route
             path="/committee"
             element={<Navigate to="/committee/dashboard" replace />}
-          />
-          <Route
-            path="/committee/reviews"
-            element={
-              <ProcurementCommitteeProtectedRoute>
-                <ProcurementCommitteeReviewsPage />
-              </ProcurementCommitteeProtectedRoute>
-            }
-          />
-          <Route
-            path="/committee/approved"
-            element={
-              <ProcurementCommitteeProtectedRoute>
-                <ProcurementCommitteeApprovedPage />
-              </ProcurementCommitteeProtectedRoute>
-            }
-          />
-          <Route
-            path="/committee/rfqs"
-            element={
-              <ProcurementCommitteeProtectedRoute>
-                <ProcurementCommitteeRFQsPage />
-              </ProcurementCommitteeProtectedRoute>
-            }
-          />
-          <Route
-            path="/committee/decisions"
-            element={
-              <ProcurementCommitteeProtectedRoute>
-                <ProcurementCommitteeDecisionsPage />
-              </ProcurementCommitteeProtectedRoute>
-            }
-          />
-          <Route
-            path="/committee/history"
-            element={
-              <ProcurementCommitteeProtectedRoute>
-                <ProcurementCommitteeHistoryPage />
-              </ProcurementCommitteeProtectedRoute>
-            }
           />
           <Route
             path="/committee/notifications"
