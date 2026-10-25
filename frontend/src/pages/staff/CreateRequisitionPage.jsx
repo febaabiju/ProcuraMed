@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../../context/AuthContext';
 import axiosClient from '../../api/axiosClient';
+import { openSecureDocument } from '../../utils/documentViewer';
 import DepartmentStaffLayout from '../../components/layout/DepartmentStaffLayout';
 import Button from '../../components/common/Button';
 import InputField from '../../components/common/InputField';
@@ -598,14 +599,13 @@ const CreateRequisitionPage = () => {
                         </p>
                       )}
                       {existingDocUrl && !supportingDocument && (
-                        <a
-                          href={existingDocUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[11px] text-violet-700 underline font-bold"
+                        <button
+                          type="button"
+                          onClick={() => openSecureDocument(existingDocUrl, 'Existing_Document.pdf')}
+                          className="text-[11px] text-violet-700 underline font-bold cursor-pointer bg-transparent border-0 p-0"
                         >
                           View Existing Document
-                        </a>
+                        </button>
                       )}
                     </div>
                   </div>

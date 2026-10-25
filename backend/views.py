@@ -77,10 +77,19 @@ def authenticate_media_request(request):
     if user and user.is_authenticated:
         return user
 
-    token = getattr(request, 'query_params', request.GET).get('token')
-    if not token and hasattr(request, 'headers') and 'Authorization' in request.headers:
-        auth_header = request.headers['Authorization']
-        if auth_header.startswith('Bearer '):
+    token = None
+    if hasattr(request, 'query_params') and request.query_params:
+        token = request.query_params.get('token')
+    if not token and hasattr(request, 'GET') and request.GET:
+        token = request.GET.get('token')
+
+    if not token:
+        auth_header = ''
+        if hasattr(request, 'META') and request.META:
+            auth_header = request.META.get('HTTP_AUTHORIZATION', '')
+        if not auth_header and hasattr(request, 'headers') and request.headers:
+            auth_header = request.headers.get('Authorization', '')
+        if auth_header and auth_header.startswith('Bearer '):
             token = auth_header.split(' ')[1].strip()
 
     if token:

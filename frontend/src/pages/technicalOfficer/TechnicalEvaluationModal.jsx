@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axiosClient from '../../api/axiosClient';
+import { openSecureDocument } from '../../utils/documentViewer';
 import Button from '../../components/common/Button';
 import {
   HiX,
@@ -66,36 +67,15 @@ const TechnicalEvaluationModal = ({
 
   if (!isOpen || !requisition) return null;
 
-  const handleOpenDocument = async (e) => {
+  const handleOpenDocument = (e) => {
     if (e && e.preventDefault) e.preventDefault();
-
-    const actualUrl = requisition.actual_document_url || requisition.supporting_document;
-    const directTarget = actualUrl || requisition.supporting_document_url;
-
-    // If direct actual URL points to media file (e.g. /media/ or http), open it in a new window/tab
-    if (actualUrl && (actualUrl.includes('/media/') || actualUrl.startsWith('blob:') || actualUrl.startsWith('data:'))) {
-      window.open(actualUrl, '_blank', 'noopener,noreferrer');
+    const docUrl = requisition.secure_document_url || requisition.supporting_document_url || requisition.actual_document_url || requisition.supporting_document;
+    if (!docUrl) {
+      alert('No supporting document attached to this request.');
       return;
     }
-
-    setDocLoading(true);
-    try {
-      const res = await axiosClient.get(`/procurement/requisitions/${requisition.id}/document/`, {
-        responseType: 'blob'
-      });
-      const contentType = res.headers['content-type'] || 'application/pdf';
-      const blob = new Blob([res.data], { type: contentType });
-      const fileURL = URL.createObjectURL(blob);
-      window.open(fileURL, '_blank', 'noopener,noreferrer');
-    } catch (err) {
-      if (directTarget) {
-        window.open(directTarget, '_blank', 'noopener,noreferrer');
-      } else {
-        alert(err.response?.data?.detail || 'Failed to open supporting document.');
-      }
-    } finally {
-      setDocLoading(false);
-    }
+    const filename = `Requisition_${requisition.req_number || requisition.id}_Document.pdf`;
+    openSecureDocument(docUrl, filename);
   };
 
   const handleSubmit = async (e) => {

@@ -8,6 +8,7 @@ from backend.views import secure_media_view
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('media/<path:path>', secure_media_view, name='secure_media'),
+    path('api/media/<path:path>', secure_media_view, name='secure_media_api'),
     path('api/accounts/', include('accounts.urls')),
     path('api/vendors/', include('vendors.urls')),
     path('api/procurement/', include('procurement.urls')),

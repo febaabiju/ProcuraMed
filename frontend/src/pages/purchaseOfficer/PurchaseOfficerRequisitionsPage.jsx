@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axiosClient from '../../api/axiosClient';
+import { openSecureDocument } from '../../utils/documentViewer';
 import PurchaseOfficerLayout from '../../components/layout/PurchaseOfficerLayout';
 import Button from '../../components/common/Button';
 import {
@@ -220,25 +221,15 @@ const PurchaseOfficerRequisitionsPage = () => {
     setTechnicalEvalDecision(null);
   };
 
-  const handleDownloadDoc = async (req) => {
+  const handleDownloadDoc = (req) => {
     if (!req) return;
-    setDocLoading(true);
-    try {
-      const res = await axiosClient.get(`/procurement/requisitions/${req.id}/document/`, {
-        responseType: 'blob'
-      });
-      const blob = new Blob([res.data], { type: 'application/pdf' });
-      const fileURL = URL.createObjectURL(blob);
-      window.open(fileURL, '_blank');
-    } catch (err) {
-      if (req.supporting_document) {
-        window.open(req.supporting_document, '_blank');
-      } else {
-        alert(err.response?.data?.detail || 'Failed to download supporting document.');
-      }
-    } finally {
-      setDocLoading(false);
+    const docUrl = req.secure_document_url || req.supporting_document;
+    if (!docUrl) {
+      alert('No supporting document attached to this requisition.');
+      return;
     }
+    const filename = `Requisition_${req.req_number || req.id}_Document.pdf`;
+    openSecureDocument(docUrl, filename);
   };
 
   const handleExecuteReview = async (actionType) => {

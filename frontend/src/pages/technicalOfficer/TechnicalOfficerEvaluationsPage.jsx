@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import axiosClient from '../../api/axiosClient';
+import { openSecureDocument } from '../../utils/documentViewer';
 import TechnicalOfficerLayout from '../../components/layout/TechnicalOfficerLayout';
 import Button from '../../components/common/Button';
 import TechnicalEvaluationModal from './TechnicalEvaluationModal';
@@ -56,33 +57,15 @@ const TechnicalOfficerEvaluationsPage = () => {
   const [selectedEval, setSelectedEval] = useState(null);
   const [docLoadingId, setDocLoadingId] = useState(null);
 
-  const handleOpenDoc = async (item) => {
+  const handleOpenDoc = (item) => {
     if (!item) return;
-    const actualUrl = item.actual_document_url || item.supporting_document;
-    if (actualUrl && (actualUrl.includes('/media/') || actualUrl.startsWith('blob:') || actualUrl.startsWith('data:'))) {
-      window.open(actualUrl, '_blank', 'noopener,noreferrer');
+    const docUrl = item.secure_document_url || item.supporting_document_url || item.actual_document_url || item.supporting_document;
+    if (!docUrl) {
+      alert('No supporting document attached to this request.');
       return;
     }
-    const reqId = item.requisition_id || item.id;
-    setDocLoadingId(item.id || reqId);
-    try {
-      const res = await axiosClient.get(`/procurement/requisitions/${reqId}/document/`, {
-        responseType: 'blob'
-      });
-      const contentType = res.headers['content-type'] || 'application/pdf';
-      const blob = new Blob([res.data], { type: contentType });
-      const fileURL = URL.createObjectURL(blob);
-      window.open(fileURL, '_blank', 'noopener,noreferrer');
-    } catch (err) {
-      const directTarget = item.supporting_document_url || actualUrl;
-      if (directTarget) {
-        window.open(directTarget, '_blank', 'noopener,noreferrer');
-      } else {
-        alert(err.response?.data?.detail || 'Failed to open supporting document.');
-      }
-    } finally {
-      setDocLoadingId(null);
-    }
+    const filename = `Requisition_${item.req_number || item.requisition_id || item.id}_Document.pdf`;
+    openSecureDocument(docUrl, filename);
   };
 
   const fetchDashboardData = async () => {

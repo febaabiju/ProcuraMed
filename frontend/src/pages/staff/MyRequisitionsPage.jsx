@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../../context/AuthContext';
 import axiosClient from '../../api/axiosClient';
+import { openSecureDocument } from '../../utils/documentViewer';
 import DepartmentStaffLayout from '../../components/layout/DepartmentStaffLayout';
 import Button from '../../components/common/Button';
 import {
@@ -639,14 +640,13 @@ const MyRequisitionsPage = () => {
                         <HiPaperClip className="w-4 h-4 text-violet-600" />
                         <span className="font-semibold text-violet-900">Document Attached</span>
                       </div>
-                      <a
-                        href={selectedRequisition.supporting_document}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs font-bold text-violet-700 underline hover:text-violet-900"
+                      <button
+                        type="button"
+                        onClick={() => openSecureDocument(selectedRequisition.secure_document_url || selectedRequisition.supporting_document, `Requisition_${selectedRequisition.req_number || 'Document'}.pdf`)}
+                        className="text-xs font-bold text-violet-700 underline hover:text-violet-900 cursor-pointer bg-transparent border-0 p-0"
                       >
                         Download / View Document
-                      </a>
+                      </button>
                     </div>
                   </div>
                 )}
