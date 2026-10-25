@@ -9,6 +9,7 @@ import mimetypes
 import json
 import urllib.request
 import urllib.error
+import urllib.parse
 import logging
 from django.conf import settings
 from django.core.files.storage import Storage
@@ -53,6 +54,10 @@ class SupabaseStorage(Storage):
     def _normalize_name(self, name):
         clean = str(name).replace('\\', '/').lstrip('/')
         return clean
+
+    def _quote_path(self, name):
+        clean = self._normalize_name(name)
+        return urllib.parse.quote(clean, safe='/')
 
     def _get_local_path(self, name):
         if not self.media_root:
@@ -133,7 +138,7 @@ class SupabaseStorage(Storage):
         # 2. Upload to Supabase Storage if configured
         if self.is_configured:
             self._ensure_bucket()
-            upload_url = f"{self.supabase_url}/storage/v1/object/{self.bucket}/{norm_name}"
+            upload_url = f"{self.supabase_url}/storage/v1/object/{self.bucket}/{self._quote_path(norm_name)}"
             headers = self._get_headers(content_type=content_type)
             headers['x-upsert'] = 'true'
             try:
@@ -156,7 +161,7 @@ class SupabaseStorage(Storage):
 
         # Attempt download from Supabase Storage
         if self.is_configured:
-            download_url = f"{self.supabase_url}/storage/v1/object/authenticated/{self.bucket}/{norm_name}"
+            download_url = f"{self.supabase_url}/storage/v1/object/authenticated/{self.bucket}/{self._quote_path(norm_name)}"
             headers = self._get_headers()
             try:
                 req = urllib.request.Request(download_url, headers=headers, method='GET')
@@ -188,7 +193,7 @@ class SupabaseStorage(Storage):
 
         if self.is_configured:
             # Check info on Supabase
-            info_url = f"{self.supabase_url}/storage/v1/object/info/authenticated/{self.bucket}/{norm_name}"
+            info_url = f"{self.supabase_url}/storage/v1/object/info/authenticated/{self.bucket}/{self._quote_path(norm_name)}"
             headers = self._get_headers()
             try:
                 req = urllib.request.Request(info_url, headers=headers, method='GET')
@@ -197,7 +202,7 @@ class SupabaseStorage(Storage):
             except Exception:
                 # Try range get
                 try:
-                    dl_url = f"{self.supabase_url}/storage/v1/object/authenticated/{self.bucket}/{norm_name}"
+                    dl_url = f"{self.supabase_url}/storage/v1/object/authenticated/{self.bucket}/{self._quote_path(norm_name)}"
                     h = self._get_headers()
                     h['Range'] = 'bytes=0-0'
                     req = urllib.request.Request(dl_url, headers=h, method='GET')
