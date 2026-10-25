@@ -6,6 +6,7 @@ import ProcurementCommitteeLayout from '../../components/layout/ProcurementCommi
 import Button from '../../components/common/Button';
 import {
   HiHome,
+  HiClipboardList,
   HiClipboardCheck,
   HiCheckCircle,
   HiRefresh,
@@ -246,6 +247,13 @@ const ProcurementCommitteeDashboardPage = () => {
           </p>
 
           <div className="pt-2 flex flex-wrap items-center gap-3">
+            <Link
+              to="/committee/purchase-requests"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-violet-600 text-white hover:bg-violet-700 shadow-xs transition-colors"
+            >
+              <HiClipboardList className="w-4 h-4" />
+              <span>View Purchase Requests</span>
+            </Link>
             <Link
               to="/committee/notifications"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-violet-50 text-violet-700 hover:bg-violet-100 transition-colors"

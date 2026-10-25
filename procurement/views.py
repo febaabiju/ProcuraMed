@@ -82,8 +82,43 @@ class RequisitionViewSet(viewsets.ModelViewSet):
 
         is_committee = 'committee' in r_name
         if is_committee:
-            # Procurement Committee Members can ONLY see purchase requests assigned directly to them
-            return qs.filter(Q(assigned_committee_member=user) | Q(requested_by=user))
+            if self.action != 'list':
+                # For details/actions, committee members can ONLY access requisitions assigned to them (or requested by them)
+                return qs.filter(Q(assigned_committee_member=user) | Q(requested_by=user))
+
+            # Auto-assign any unassigned committee requisitions to ensure all received requests have assignments
+            unassigned_qs = Requisition.objects.filter(
+                status=Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW,
+                assigned_committee_member__isnull=True
+            )
+            for u_req in unassigned_qs:
+                u_req.assign_committee_member(save=True)
+
+            scope = self.request.query_params.get('scope')
+            if scope == 'my_assigned':
+                qs = qs.filter(assigned_committee_member=user)
+            else:
+                committee_statuses = [
+                    Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW,
+                    Requisition.StatusChoices.APPROVED,
+                    Requisition.StatusChoices.RFQ_ISSUED,
+                    Requisition.StatusChoices.QUOTATIONS_RECEIVED,
+                    Requisition.StatusChoices.COMPLETED,
+                ]
+                qs = qs.filter(
+                    Q(assigned_committee_member__isnull=False) |
+                    Q(status__in=committee_statuses) |
+                    Q(requested_by=user)
+                )
+
+            # Category / Intake Source filtering
+            intake_filter = self.request.query_params.get('intake_source')
+            if intake_filter in ['technical', 'TECHNICAL', 'Technical Evaluation Completed']:
+                qs = qs.filter(requires_technical_evaluation=True)
+            elif intake_filter in ['non_technical', 'NON_TECHNICAL', 'No Technical Evaluation Required']:
+                qs = qs.filter(requires_technical_evaluation=False)
+
+            return qs
 
         if is_staff_role:
             return qs.filter(requested_by=user)
@@ -541,6 +576,7 @@ class RequisitionViewSet(viewsets.ModelViewSet):
                     requisition.assigned_technical_officer = None
                     requisition.technical_assigned_at = None
                     requisition.status = Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW
+                    requisition.assign_committee_member()
                     next_stage = "Procurement Committee Review"
 
                     Approval.objects.create(
@@ -1103,6 +1139,7 @@ class RequisitionViewSet(viewsets.ModelViewSet):
                 # Outcome 1: Technically Suitable (Approve) -> Forward to Procurement Committee review
                 requisition.status = Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW
                 requisition.review_comments = remarks
+                requisition.assign_committee_member()
                 approval_status = Approval.StatusChoices.APPROVED
                 audit_action = 'Technical Evaluation Completed - Technically Suitable'
                 stage_desc = 'Requisition approved as Technically Suitable and forwarded to Procurement Committee review.'
@@ -1117,7 +1154,9 @@ class RequisitionViewSet(viewsets.ModelViewSet):
             requisition.save(update_fields=[
                 'technical_compliance', 'technical_evaluation_remarks',
                 'technical_recommendation', 'technical_evaluated_at',
-                'technical_document', 'status', 'review_comments', 'updated_at'
+                'technical_document', 'status', 'review_comments',
+                'assigned_committee_member', 'committee_assigned_at',
+                'updated_at'
             ])
 
             # Audit and approval logging

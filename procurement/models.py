@@ -693,70 +693,74 @@ class Requisition(models.Model):
 
         from django.contrib.auth import get_user_model
         from django.utils import timezone
+        from django.db import transaction
 
         User = get_user_model()
-        # Retrieve the 5 active committee members in deterministic order (Member 1 to Member 5)
-        committee_members = list(User.objects.filter(
-            role__name__icontains='committee',
-            is_active=True
-        ).order_by('employee_id', 'id'))
 
-        if not committee_members:
-            return None
+        with transaction.atomic():
+            # Retrieve the 5 active committee members in deterministic order (Member 1 to Member 5)
+            # select_for_update() ensures concurrent incoming requests are serialized and assigned fairly
+            committee_members = list(User.objects.select_for_update().filter(
+                role__name__icontains='committee',
+                is_active=True
+            ).order_by('employee_id', 'id'))
 
-        N = len(committee_members)
+            if not committee_members:
+                return None
 
-        # Terminal statuses that no longer count as active purchase workload
-        TERMINAL_STATUSES = [
-            self.StatusChoices.COMPLETED,
-            self.StatusChoices.REJECTED,
-            self.StatusChoices.CANCELLED,
-            'CLOSED',
-        ]
+            N = len(committee_members)
 
-        # Calculate active purchase workload for each committee member
-        workloads = {}
-        for m in committee_members:
-            w = Requisition.objects.filter(
-                assigned_committee_member=m
-            ).exclude(status__in=TERMINAL_STATUSES).count()
-            workloads[m.id] = w
+            # Terminal statuses that no longer count as active purchase workload
+            TERMINAL_STATUSES = [
+                self.StatusChoices.COMPLETED,
+                self.StatusChoices.REJECTED,
+                self.StatusChoices.CANCELLED,
+                'CLOSED',
+            ]
 
-        # Find the last assigned member from existing assigned requisitions
-        last_assigned_req = Requisition.objects.filter(
-            assigned_committee_member__isnull=False
-        ).exclude(id=self.id if self.pk else None).order_by('-committee_assigned_at', '-id').first()
+            # Calculate active purchase workload for each committee member
+            workloads = {}
+            for m in committee_members:
+                w = Requisition.objects.filter(
+                    assigned_committee_member=m
+                ).exclude(status__in=TERMINAL_STATUSES).count()
+                workloads[m.id] = w
 
-        last_index = -1
-        if last_assigned_req and last_assigned_req.assigned_committee_member in committee_members:
-            last_index = committee_members.index(last_assigned_req.assigned_committee_member)
+            # Find the last assigned member from existing assigned requisitions
+            last_assigned_req = Requisition.objects.filter(
+                assigned_committee_member__isnull=False
+            ).exclude(id=self.id if self.pk else None).order_by('-committee_assigned_at', '-id').first()
 
-        # Workload balancing rule:
-        # Assign to the member with the fewest active purchase assignments.
-        # If tied, continue round-robin order.
-        min_workload = min(workloads[m.id] for m in committee_members)
-        tied_candidates = [m for m in committee_members if workloads[m.id] == min_workload]
+            last_index = -1
+            if last_assigned_req and last_assigned_req.assigned_committee_member in committee_members:
+                last_index = committee_members.index(last_assigned_req.assigned_committee_member)
 
-        if len(tied_candidates) == 1:
-            chosen = tied_candidates[0]
-        else:
-            # Continue round-robin circular order from (last_index + 1)
-            chosen = None
-            for step in range(1, N + 1):
-                candidate = committee_members[(last_index + step) % N]
-                if candidate in tied_candidates:
-                    chosen = candidate
-                    break
-            if not chosen:
+            # Workload balancing rule:
+            # Assign to the member with the fewest active purchase assignments.
+            # If tied, continue round-robin order.
+            min_workload = min(workloads[m.id] for m in committee_members)
+            tied_candidates = [m for m in committee_members if workloads[m.id] == min_workload]
+
+            if len(tied_candidates) == 1:
                 chosen = tied_candidates[0]
+            else:
+                # Continue round-robin circular order from (last_index + 1)
+                chosen = None
+                for step in range(1, N + 1):
+                    candidate = committee_members[(last_index + step) % N]
+                    if candidate in tied_candidates:
+                        chosen = candidate
+                        break
+                if not chosen:
+                    chosen = tied_candidates[0]
 
-        self.assigned_committee_member = chosen
-        self.committee_assigned_at = timezone.now()
+            self.assigned_committee_member = chosen
+            self.committee_assigned_at = timezone.now()
 
-        if save and self.pk:
-            self.save(update_fields=['assigned_committee_member', 'committee_assigned_at', 'updated_at'])
+            if save and self.pk:
+                self.save(update_fields=['assigned_committee_member', 'committee_assigned_at', 'updated_at'])
 
-        return chosen
+            return chosen
 
     def save(self, *args, **kwargs):
         if not self.req_number:
@@ -773,6 +777,11 @@ class Requisition(models.Model):
         if self.status == self.StatusChoices.PENDING_COMMITTEE_REVIEW:
             if not self.assigned_committee_member:
                 self.assign_committee_member()
+            if 'update_fields' in kwargs and kwargs['update_fields'] is not None:
+                fields = set(kwargs['update_fields'])
+                fields.add('assigned_committee_member')
+                fields.add('committee_assigned_at')
+                kwargs['update_fields'] = list(fields)
 
         # NOTE: Department Staff submission does NOT decide whether technical evaluation is required.
         # The Purchase Officer decides this explicitly during the Purchase Officer review stage.

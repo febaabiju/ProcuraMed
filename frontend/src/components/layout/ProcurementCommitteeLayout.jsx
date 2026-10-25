@@ -6,6 +6,7 @@ import ProcuraMedLogo from '../common/ProcuraMedLogo';
 import Button from '../common/Button';
 import {
   HiHome,
+  HiClipboardList,
   HiClipboardCheck,
   HiCheckCircle,
   HiArchive,
@@ -49,6 +50,7 @@ const ProcurementCommitteeLayout = ({
 
   const navItems = [
     { name: 'Dashboard', path: '/committee/dashboard', icon: HiHome },
+    { name: 'Purchase Requests', path: '/committee/purchase-requests', icon: HiClipboardList },
     { name: 'Notifications', path: '/committee/notifications', icon: HiBell },
     { name: 'My Profile', path: '/committee/profile', icon: HiUserCircle },
   ];

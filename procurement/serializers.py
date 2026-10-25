@@ -120,6 +120,8 @@ class RequisitionSerializer(serializers.ModelSerializer):
     assigned_committee_member_name = serializers.SerializerMethodField()
     assigned_committee_member_employee_id = serializers.SerializerMethodField()
     committee_assignment_status = serializers.SerializerMethodField()
+    intake_source = serializers.SerializerMethodField()
+    intake_source_display = serializers.SerializerMethodField()
     technical_evaluations = TechnicalEvaluationSerializer(many=True, read_only=True)
     technical_document_url = serializers.SerializerMethodField()
     approvals = ApprovalSerializer(many=True, read_only=True)
@@ -144,6 +146,7 @@ class RequisitionSerializer(serializers.ModelSerializer):
             'assigned_committee_member', 'assigned_committee_member_details',
             'assigned_committee_member_name', 'assigned_committee_member_employee_id',
             'committee_assignment_status', 'committee_assigned_at',
+            'intake_source', 'intake_source_display',
             'technical_compliance', 'technical_evaluation_remarks',
             'technical_recommendation', 'technical_evaluated_at',
             'technical_document', 'technical_document_url', 'technical_evaluations',
@@ -164,6 +167,7 @@ class RequisitionSerializer(serializers.ModelSerializer):
             'assigned_committee_member', 'assigned_committee_member_details',
             'assigned_committee_member_name', 'assigned_committee_member_employee_id',
             'committee_assignment_status', 'committee_assigned_at',
+            'intake_source', 'intake_source_display',
             'technical_compliance', 'technical_evaluation_remarks',
             'technical_recommendation', 'technical_evaluated_at',
             'technical_document', 'technical_document_url', 'technical_evaluations',
@@ -246,6 +250,16 @@ class RequisitionSerializer(serializers.ModelSerializer):
         if obj.assigned_committee_member:
             return "Assigned"
         return "Pending Assignment"
+
+    def get_intake_source(self, obj):
+        if obj.requires_technical_evaluation:
+            return "TECHNICAL_EVALUATION"
+        return "NO_TECHNICAL_EVALUATION"
+
+    def get_intake_source_display(self, obj):
+        if obj.requires_technical_evaluation:
+            return "Technical Evaluation Completed"
+        return "No Technical Evaluation Required"
 
     def validate_supporting_document(self, value):
         if not value:
