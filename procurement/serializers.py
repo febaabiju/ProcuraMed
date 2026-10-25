@@ -130,6 +130,7 @@ class RequisitionSerializer(serializers.ModelSerializer):
     required_date = serializers.SerializerMethodField()
     secure_document_url = serializers.SerializerMethodField()
     technical_evaluation_advisory = serializers.SerializerMethodField()
+    latest_rfq = serializers.SerializerMethodField()
 
     class Meta:
         model = Requisition
@@ -152,7 +153,7 @@ class RequisitionSerializer(serializers.ModelSerializer):
             'technical_document', 'technical_document_url', 'technical_evaluations',
             'priority', 'estimated_budget',
             'status', 'justification', 'supporting_document', 'secure_document_url',
-            'technical_evaluation_advisory',
+            'technical_evaluation_advisory', 'latest_rfq',
             'items', 'approvals', 'review_comments', 'reviewed_by', 'reviewed_by_details',
             'reviewed_at', 'submitted_at', 'required_date', 'created_at', 'updated_at'
         ]
@@ -174,7 +175,7 @@ class RequisitionSerializer(serializers.ModelSerializer):
             'requires_technical_evaluation',
             'technical_specialization', 'review_comments', 'reviewed_by', 'reviewed_at',
             'submitted_at', 'required_date', 'secure_document_url', 'technical_evaluation_advisory',
-            'created_at', 'updated_at'
+            'latest_rfq', 'created_at', 'updated_at'
         ]
 
     def get_assigned_purchase_officer_name(self, obj):
@@ -260,6 +261,78 @@ class RequisitionSerializer(serializers.ModelSerializer):
         if obj.requires_technical_evaluation:
             return "Technical Evaluation Completed"
         return "No Technical Evaluation Required"
+
+    def get_latest_rfq(self, obj):
+        rfq = obj.quotation_requests.order_by('-created_at').first()
+        if not rfq:
+            return None
+
+        invitations = rfq.vendor_invitations.select_related('vendor').prefetch_related('vendor__supplier_categories').all()
+        quotations_map = {q.vendor_id: q for q in rfq.quotations.all()}
+
+        tracking = []
+        for inv in invitations:
+            v = inv.vendor
+            q = quotations_map.get(v.id)
+            tracking.append({
+                'invitation_id': inv.id,
+                'vendor_id': v.id,
+                'vendor_code': v.vendor_code or f"VEN-2026-{v.id:05d}",
+                'company_name': v.company_name,
+                'contact_person': v.contact_person,
+                'email': v.email,
+                'phone': v.phone,
+                'categories': [c.name for c in v.supplier_categories.all() if c.name],
+                'invitation_status': inv.status,
+                'invitation_status_display': inv.get_status_display(),
+                'invited_at': inv.invited_at.isoformat() if inv.invited_at else None,
+                'has_quoted': q is not None,
+                'quotation_id': q.id if q else None,
+                'quotation_number': q.quotation_number if q else None,
+                'quotation_status': q.status if q else 'PENDING',
+                'quotation_status_display': q.get_status_display() if q else 'Awaiting Quotation',
+                'total_amount': str(q.total_amount) if q else None,
+                'lead_time_days': q.lead_time_days if q else None,
+                'submission_date': q.submission_date.isoformat() if q and q.submission_date else None,
+                'remarks': q.remarks if q else None,
+            })
+
+        total_invited = len(tracking)
+        quoted_count = sum(1 for t in tracking if t['has_quoted'])
+
+        if rfq.status == 'CANCELLED':
+            workflow_status = 'CANCELLED'
+            workflow_status_display = 'Cancelled'
+        elif rfq.status == 'CLOSED' or any(t.get('quotation_status') == 'ACCEPTED' for t in tracking):
+            workflow_status = 'COMPLETED'
+            workflow_status_display = 'Quotation Stage Completed'
+        elif quoted_count == 0:
+            workflow_status = 'AWAITING_QUOTATIONS'
+            workflow_status_display = f'Awaiting Quotations (0/{total_invited})'
+        elif total_invited > 0 and quoted_count >= total_invited:
+            workflow_status = 'ALL_QUOTATIONS_RECEIVED'
+            workflow_status_display = f'All Quotations Received ({quoted_count}/{total_invited})'
+        else:
+            workflow_status = 'QUOTATIONS_RECEIVED'
+            workflow_status_display = f'Quotations Received ({quoted_count}/{total_invited})'
+
+        return {
+            'id': rfq.id,
+            'rfq_number': rfq.rfq_number,
+            'title': rfq.title,
+            'due_date': rfq.due_date.isoformat() if rfq.due_date else None,
+            'delivery_requirements': rfq.delivery_requirements,
+            'delivery_location': rfq.delivery_location,
+            'terms_and_conditions': rfq.terms_and_conditions,
+            'status': rfq.status,
+            'status_display': rfq.get_status_display(),
+            'invited_vendors_count': total_invited,
+            'quotations_count': quoted_count,
+            'quotation_workflow_status': workflow_status,
+            'quotation_workflow_status_display': workflow_status_display,
+            'vendor_tracking': tracking,
+            'created_at': rfq.created_at.isoformat() if rfq.created_at else None,
+        }
 
     def validate_supporting_document(self, value):
         if not value:

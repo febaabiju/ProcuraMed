@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axiosClient from '../../api/axiosClient';
-import { useAuth } from '../../context/AuthContext';
 import ProcurementCommitteeLayout from '../../components/layout/ProcurementCommitteeLayout';
 import Button from '../../components/common/Button';
+import VendorMatchingModal from '../../components/committee/VendorMatchingModal';
+import RFQTrackingModal from '../../components/committee/RFQTrackingModal';
 import {
   HiSearch,
   HiRefresh,
@@ -15,11 +16,11 @@ import {
   HiTag,
   HiX,
   HiShieldCheck,
-  HiEye
+  HiEye,
+  HiDocumentReport
 } from 'react-icons/hi';
 
 const ProcurementCommitteePurchaseRequestsPage = () => {
-  const { user: authUser } = useAuth();
   const [requisitions, setRequisitions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -28,8 +29,10 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
   // Category tabs: 'ALL', 'TECHNICAL', 'NON_TECHNICAL'
   const [activeTab, setActiveTab] = useState('ALL');
 
-  // Detail Modal state
+  // Modal states
   const [selectedReq, setSelectedReq] = useState(null);
+  const [matchingReq, setMatchingReq] = useState(null);
+  const [trackingReq, setTrackingReq] = useState(null);
 
   const fetchRequisitions = async () => {
     setLoading(true);
@@ -38,10 +41,28 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
       const res = await axiosClient.get('/procurement/requisitions/');
       const data = res.data?.results ? res.data.results : (Array.isArray(res.data) ? res.data : []);
       setRequisitions(data);
+      if (trackingReq) {
+        const updated = data.find(r => r.id === trackingReq.id);
+        if (updated) setTrackingReq(updated);
+      }
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to load purchase requests.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRFQUpdated = async () => {
+    try {
+      const res = await axiosClient.get('/procurement/requisitions/');
+      const data = res.data?.results ? res.data.results : (Array.isArray(res.data) ? res.data : []);
+      setRequisitions(data);
+      if (trackingReq) {
+        const updated = data.find(r => r.id === trackingReq.id);
+        if (updated) setTrackingReq(updated);
+      }
+    } catch {
+      // ignore
     }
   };
 
@@ -78,6 +99,7 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
         const cat = (req.category || '').toLowerCase();
         const member = (req.assigned_committee_member_name || '').toLowerCase();
         const items = (req.items || []).map(i => (i.item_name || '').toLowerCase()).join(' ');
+        const rfqNum = (req.latest_rfq?.rfq_number || '').toLowerCase();
 
         if (
           !reqNum.includes(query) &&
@@ -85,7 +107,8 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
           !dept.includes(query) &&
           !cat.includes(query) &&
           !member.includes(query) &&
-          !items.includes(query)
+          !items.includes(query) &&
+          !rfqNum.includes(query)
         ) {
           return false;
         }
@@ -360,10 +383,6 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
             {filteredRequisitions.map((req) => {
               const statusBadge = getStatusBadge(req.status);
               const isTechnical = req.requires_technical_evaluation;
-              const isAssignedToCurrentUser =
-                authUser?.id &&
-                (req.assigned_committee_member === authUser.id ||
-                  req.assigned_committee_member_details?.id === authUser.id);
 
               const itemsList = req.items || [];
               const itemsCount = itemsList.length;
@@ -444,31 +463,55 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
                       </div>
                     </div>
 
-                    {/* Column 2: Assigned Committee Member */}
+                    {/* Column 2: Vendor Sourcing / RFQ Status (Replaces Assigned Member on card) */}
                     <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col justify-between space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400">
-                          Assigned Member
+                          Vendor Sourcing
                         </span>
-                        {isAssignedToCurrentUser && (
-                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-violet-100 text-violet-800 border border-violet-200">
-                            You
+                        {req.latest_rfq ? (
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                              (req.latest_rfq.quotations_count || 0) > 0
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-blue-50 text-blue-700 border-blue-200'
+                            }`}
+                          >
+                            {req.latest_rfq.quotation_workflow_status_display ||
+                              ((req.latest_rfq.quotations_count || 0) > 0
+                                ? 'Quotations Received'
+                                : 'Awaiting Quotations')}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                            Ready for RFQ
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-lg bg-violet-600 text-white flex items-center justify-center text-xs font-bold">
-                          {(req.assigned_committee_member_name || 'PC').charAt(0)}
+
+                      {req.latest_rfq ? (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5 font-mono text-xs font-bold text-slate-800">
+                            <HiClipboardList className="w-3.5 h-3.5 text-violet-600 flex-shrink-0" />
+                            <span className="truncate">{req.latest_rfq.rfq_number}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px] text-slate-500">
+                            <span className="font-semibold text-slate-700">
+                              {req.latest_rfq.quotations_count || 0}/{req.latest_rfq.invited_vendors_count || 0} Quotes
+                            </span>
+                            <span className="text-[10px] text-slate-400">
+                              Due {formatDate(req.latest_rfq.due_date)}
+                            </span>
+                          </div>
                         </div>
-                        <div className="overflow-hidden">
-                          <p className="text-xs font-bold text-slate-900 truncate">
-                            {req.assigned_committee_member_name || 'Unassigned'}
-                          </p>
-                          <p className="text-[10px] font-mono text-slate-500">
-                            {req.assigned_committee_member_employee_id || 'PC-MEMBER'}
+                      ) : (
+                        <div className="space-y-1">
+                          <p className="text-xs font-bold text-slate-700">Vendor Sourcing Pending</p>
+                          <p className="text-[10px] text-slate-500">
+                            Match suitable vendors and send multi-vendor RFQ.
                           </p>
                         </div>
-                      </div>
+                      )}
                     </div>
                   </div>
 
@@ -501,17 +544,42 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
                       )}
                     </div>
 
-                    {/* View Details Trigger */}
-                    <div>
+                    {/* Action Triggers */}
+                    <div className="flex flex-wrap items-center gap-2">
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => setSelectedReq(req)}
-                        className="text-xs font-semibold text-slate-700 hover:text-violet-700 hover:bg-violet-50 border-slate-200 gap-1.5 w-full sm:w-auto"
+                        className="text-xs font-semibold text-slate-700 hover:text-violet-700 hover:bg-violet-50 border-slate-200 gap-1.5"
                       >
                         <HiEye className="w-3.5 h-3.5" />
                         <span>View Details</span>
                       </Button>
+
+                      {/* Find Vendors Action (Requirement 2 & 3) */}
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => setMatchingReq(req)}
+                        className="bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs gap-1.5 shadow-xs"
+                      >
+                        <HiSearch className="w-3.5 h-3.5" />
+                        <span>Find Vendors</span>
+                      </Button>
+
+                      {/* Track RFQ Action (Requirement 4) */}
+                      {req.latest_rfq && (
+                        <button
+                          type="button"
+                          onClick={() => setTrackingReq(req)}
+                          className="px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition flex items-center gap-1.5 shadow-xs"
+                        >
+                          <HiDocumentReport className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>
+                            Track RFQ ({req.latest_rfq.quotations_count || 0}/{req.latest_rfq.invited_vendors_count || 0})
+                          </span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 </motion.div>
@@ -678,6 +746,28 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
           </div>
         )}
       </AnimatePresence>
+
+      {/* 4. Find Suitable Vendors & Multi-Vendor RFQ Modal */}
+      {matchingReq && (
+        <VendorMatchingModal
+          isOpen={!!matchingReq}
+          onClose={() => setMatchingReq(null)}
+          requisition={matchingReq}
+          onRFQCreated={async () => {
+            await fetchRequisitions();
+          }}
+        />
+      )}
+
+      {/* 5. Separate RFQ Tracking & Vendor Quotation Modal */}
+      {trackingReq && (
+        <RFQTrackingModal
+          isOpen={!!trackingReq}
+          onClose={() => setTrackingReq(null)}
+          requisition={trackingReq}
+          onRFQUpdated={handleRFQUpdated}
+        />
+      )}
     </ProcurementCommitteeLayout>
   );
 };

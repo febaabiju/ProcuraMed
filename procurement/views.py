@@ -62,7 +62,11 @@ class RequisitionViewSet(viewsets.ModelViewSet):
 
         qs = Requisition.objects.select_related(
             'department', 'requested_by', 'assigned_purchase_officer', 'assigned_technical_officer', 'assigned_committee_member'
-        ).prefetch_related('approvals', 'items', 'technical_evaluations')
+        ).prefetch_related(
+            'approvals', 'items', 'technical_evaluations',
+            'quotation_requests__vendor_invitations__vendor__supplier_categories',
+            'quotation_requests__quotations'
+        )
 
         if is_admin_or_super:
             return qs
@@ -802,13 +806,77 @@ class RequisitionViewSet(viewsets.ModelViewSet):
         matched_products_qs = matched_products_qs.order_by('name')[:40]
         matched_products_data = VendorProductSerializer(matched_products_qs, many=True, context={'request': request}).data
 
+        # Map matching products by vendor ID
+        products_by_vendor = {}
+        for p in matched_products_data:
+            vid = p.get('vendor')
+            if vid not in products_by_vendor:
+                products_by_vendor[vid] = []
+            products_by_vendor[vid].append(p)
+
+        # Check existing active invitations for duplicate prevention
+        existing_active_rfqs = QuotationRequest.objects.filter(
+            requisition=requisition,
+            status__in=[QuotationRequest.StatusChoices.SENT, QuotationRequest.StatusChoices.OPEN]
+        )
+        already_invited_vendor_ids = set(
+            RFQVendorInvitation.objects.filter(
+                quotation_request__in=existing_active_rfqs
+            ).values_list('vendor_id', flat=True)
+        )
+
+        # Enrich each matched vendor with capability, product, and suitability details
+        for v in matched_data:
+            vid = v['id']
+            v_cats = [
+                c.get('name') for c in (v.get('supplier_category_details') or [])
+                if isinstance(c, dict) and c.get('name')
+            ]
+            if not v_cats and v.get('supplier_categories'):
+                v_cats = list(
+                    SupplierCategory.objects.filter(
+                        id__in=[cid for cid in v.get('supplier_categories', []) if isinstance(cid, int)]
+                    ).values_list('name', flat=True)
+                )
+            overlapping_cats = [c for c in v_cats if any(mc.lower() == c.lower() for mc in match_categories)]
+            v_prods = products_by_vendor.get(vid, [])
+
+            reasons = []
+            if overlapping_cats:
+                reasons.append(f"Supplies category: {', '.join(overlapping_cats)}")
+            if v_prods:
+                item_names_summary = ', '.join([p['name'] for p in v_prods[:2]])
+                reasons.append(f"Catalogue items: {item_names_summary}")
+            if requisition.department:
+                reasons.append(f"Verified for {requisition.department.name}")
+
+            v['matching_products'] = v_prods
+            v['matching_categories'] = overlapping_cats
+            v['suitability_reasons'] = reasons
+            v['already_invited'] = vid in already_invited_vendor_ids
+            v['is_eligible'] = True
+
         primary_category = requisition.category or (list(match_categories)[0] if match_categories else None)
+
+        req_items_summary = [
+            {
+                'id': it.id,
+                'item_name': it.item_name,
+                'category': it.category,
+                'quantity': it.quantity,
+                'specifications': it.specifications,
+                'estimated_unit_price': str(it.estimated_unit_price) if it.estimated_unit_price else '0.00'
+            }
+            for it in requisition.items.all()
+        ]
 
         return Response({
             'requisition_id': requisition.id,
             'req_number': requisition.req_number,
             'title': requisition.title,
             'category': primary_category,
+            'department_name': requisition.department.name if requisition.department else None,
+            'items': req_items_summary,
             'matched_categories': list(match_categories),
             'has_category': True,
             'assigned_committee_member_id': requisition.assigned_committee_member_id,
@@ -817,6 +885,7 @@ class RequisitionViewSet(viewsets.ModelViewSet):
                 requisition.assigned_committee_member.username
             ) if requisition.assigned_committee_member else None,
             'matched_vendors': matched_data,
+            'vendors': matched_data,
             'matched_count': len(matched_data),
             'other_vendors': [],  # Unrelated vendors are excluded
             'total_active_vendors': len(matched_data),
@@ -1385,20 +1454,23 @@ class QuotationRequestViewSet(viewsets.ModelViewSet):
         delivery_location = data.get('delivery_location', '').strip() or (requisition.department.name if requisition.department else 'Hospital Central Stores')
         terms_and_conditions = data.get('terms_and_conditions', '').strip()
 
-        # Prevent duplicate submissions
-        existing_rfq = QuotationRequest.objects.filter(
+        # Prevent duplicate invitations to the same vendor for the same request
+        active_rfqs_for_req = QuotationRequest.objects.filter(
             requisition=requisition,
-            status__in=[QuotationRequest.StatusChoices.OPEN, QuotationRequest.StatusChoices.SENT],
-            title=title
-        ).first()
-        if existing_rfq:
-            return Response(
-                {
-                    'detail': f"An active RFQ '{existing_rfq.rfq_number}' has already been issued with this title for {requisition.req_number}.",
-                    'rfq': QuotationRequestSerializer(existing_rfq, context={'request': request}).data
-                },
-                status=status.HTTP_409_CONFLICT
+            status__in=[QuotationRequest.StatusChoices.OPEN, QuotationRequest.StatusChoices.SENT]
+        )
+        if active_rfqs_for_req.exists():
+            already_invited_names = list(
+                RFQVendorInvitation.objects.filter(
+                    quotation_request__in=active_rfqs_for_req,
+                    vendor__in=validated_vendors
+                ).values_list('vendor__company_name', flat=True)
             )
+            if already_invited_names:
+                return Response(
+                    {'vendor_ids': f"Vendor(s) {', '.join(already_invited_names)} have already been invited to an active RFQ for {requisition.req_number}."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
         items_input = data.get('items', [])
 
