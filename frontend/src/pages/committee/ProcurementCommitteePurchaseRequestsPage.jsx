@@ -33,9 +33,6 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
   
   // Category tabs: 'ALL', 'TECHNICAL', 'NON_TECHNICAL'
   const [activeTab, setActiveTab] = useState('ALL');
-  
-  // Assigned filter: 'ALL' or 'MY_ASSIGNED'
-  const [assignmentFilter, setAssignmentFilter] = useState('ALL');
 
   // Detail Modal state
   const [selectedReq, setSelectedReq] = useState(null);
@@ -63,15 +60,11 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
     const total = requisitions.length;
     const technical = requisitions.filter(r => r.requires_technical_evaluation).length;
     const nonTechnical = requisitions.filter(r => !r.requires_technical_evaluation).length;
-    const myAssigned = requisitions.filter(r => {
-      const memberId = r.assigned_committee_member || r.assigned_committee_member_details?.id;
-      return authUser?.id && memberId === authUser.id;
-    }).length;
 
-    return { total, technical, nonTechnical, myAssigned };
-  }, [requisitions, authUser]);
+    return { total, technical, nonTechnical };
+  }, [requisitions]);
 
-  // Filtered requisitions based on category tab, assignment filter, and search query
+  // Filtered requisitions based on category tab and search query
   const filteredRequisitions = useMemo(() => {
     return requisitions.filter(req => {
       // 1. Category Tab Filter
@@ -80,14 +73,6 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
       }
       if (activeTab === 'NON_TECHNICAL' && req.requires_technical_evaluation) {
         return false;
-      }
-
-      // 2. Assignment Filter
-      if (assignmentFilter === 'MY_ASSIGNED') {
-        const memberId = req.assigned_committee_member || req.assigned_committee_member_details?.id;
-        if (!authUser?.id || memberId !== authUser.id) {
-          return false;
-        }
       }
 
       // 3. Search query
@@ -233,35 +218,6 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
             </div>
 
             <div className="flex items-center gap-2.5">
-              {/* Assignment toggle */}
-              <div className="flex items-center p-1 bg-slate-100 rounded-xl text-xs font-semibold">
-                <button
-                  onClick={() => setAssignmentFilter('ALL')}
-                  className={`px-3 py-1.5 rounded-lg transition ${
-                    assignmentFilter === 'ALL'
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  All Members
-                </button>
-                <button
-                  onClick={() => setAssignmentFilter('MY_ASSIGNED')}
-                  className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
-                    assignmentFilter === 'MY_ASSIGNED'
-                      ? 'bg-white text-violet-700 shadow-xs font-bold'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <span>Assigned to Me</span>
-                  {counts.myAssigned > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-violet-100 text-violet-800">
-                      {counts.myAssigned}
-                    </span>
-                  )}
-                </button>
-              </div>
-
               <Button
                 variant="outline"
                 size="sm"

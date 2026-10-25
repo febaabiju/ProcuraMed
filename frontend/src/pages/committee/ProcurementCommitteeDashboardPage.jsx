@@ -152,11 +152,11 @@ const ProcurementCommitteeDashboardPage = () => {
 
         {/* 2. Sample Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Card 1: Total Requisitions */}
+          {/* Card 1: Assigned Requests */}
           <div className="p-5 bg-white rounded-2xl border border-violet-100 shadow-xs flex flex-col justify-between space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                Hospital Requisitions
+                Assigned Requests
               </span>
               <div className="w-10 h-10 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center font-bold">
                 <HiShoppingBag className="w-5 h-5" />
@@ -165,7 +165,7 @@ const ProcurementCommitteeDashboardPage = () => {
             <div>
               <h3 className="text-3xl font-black text-slate-900">{totalReqs}</h3>
               <p className="text-xs text-violet-600 font-semibold mt-1">
-                Hospital purchase submissions
+                Your assigned purchase cases
               </p>
             </div>
           </div>

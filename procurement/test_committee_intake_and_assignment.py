@@ -300,44 +300,66 @@ class CommitteeIntakeAndAssignmentTests(TestCase):
                 return response_data['results']
             return response_data
 
-        # 1. All Requests: both must appear
-        res_all = self.client.get('/api/procurement/requisitions/')
-        self.assertEqual(res_all.status_code, status.HTTP_200_OK)
-        results_all = get_results(res_all.data)
-        req_numbers_all = [r['req_number'] for r in results_all]
-        self.assertIn('REQ-LIST-001', req_numbers_all)
-        self.assertIn('REQ-LIST-002', req_numbers_all)
+        # 1. Member 1 queries /api/procurement/requisitions/
+        # Member 1 must ONLY see their assigned request (REQ-LIST-001) and NOT Member 2's (REQ-LIST-002)
+        self.client.force_authenticate(user=self.committee_members[0])
+        res_m1 = self.client.get('/api/procurement/requisitions/')
+        self.assertEqual(res_m1.status_code, status.HTTP_200_OK)
+        results_m1 = get_results(res_m1.data)
+        req_numbers_m1 = [r['req_number'] for r in results_m1]
+        self.assertIn('REQ-LIST-001', req_numbers_m1)
+        self.assertNotIn('REQ-LIST-002', req_numbers_m1)
 
-        item_001 = next(r for r in results_all if r['req_number'] == 'REQ-LIST-001')
+        item_001 = next(r for r in results_m1 if r['req_number'] == 'REQ-LIST-001')
         self.assertEqual(item_001['intake_source'], 'NO_TECHNICAL_EVALUATION')
         self.assertEqual(item_001['intake_source_display'], 'No Technical Evaluation Required')
         self.assertEqual(item_001['assigned_committee_member_name'], 'Member1 Committee')
 
-        item_002 = next(r for r in results_all if r['req_number'] == 'REQ-LIST-002')
+        # 2. Member 2 queries /api/procurement/requisitions/
+        # Member 2 must ONLY see their assigned request (REQ-LIST-002) and NOT Member 1's (REQ-LIST-001)
+        self.client.force_authenticate(user=self.committee_members[1])
+        res_m2 = self.client.get('/api/procurement/requisitions/')
+        self.assertEqual(res_m2.status_code, status.HTTP_200_OK)
+        results_m2 = get_results(res_m2.data)
+        req_numbers_m2 = [r['req_number'] for r in results_m2]
+        self.assertIn('REQ-LIST-002', req_numbers_m2)
+        self.assertNotIn('REQ-LIST-001', req_numbers_m2)
+
+        item_002 = next(r for r in results_m2 if r['req_number'] == 'REQ-LIST-002')
         self.assertEqual(item_002['intake_source'], 'TECHNICAL_EVALUATION')
         self.assertEqual(item_002['intake_source_display'], 'Technical Evaluation Completed')
         self.assertEqual(item_002['assigned_committee_member_name'], 'Member2 Committee')
 
-        # 2. Filter: Technical Evaluation Completed
-        res_tech = self.client.get('/api/procurement/requisitions/?intake_source=technical')
-        self.assertEqual(res_tech.status_code, status.HTTP_200_OK)
-        results_tech = get_results(res_tech.data)
-        req_numbers_tech = [r['req_number'] for r in results_tech]
-        self.assertIn('REQ-LIST-002', req_numbers_tech)
-        self.assertNotIn('REQ-LIST-001', req_numbers_tech)
+        # 3. Backend permission enforcement: Member 1 cannot process/approve Member 2's request
+        self.client.force_authenticate(user=self.committee_members[0])
+        unauthorized_approve_res = self.client.post(
+            f'/api/procurement/requisitions/{req_tech.id}/approve/',
+            {'remarks': 'Unauthorized approval attempt'}
+        )
+        self.assertIn(unauthorized_approve_res.status_code, [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND])
 
-        # 3. Filter: No Technical Evaluation Required
+        # 4. Filter on assigned requests: No Technical Evaluation Required for Member 1
         res_non_tech = self.client.get('/api/procurement/requisitions/?intake_source=non_technical')
         self.assertEqual(res_non_tech.status_code, status.HTTP_200_OK)
         results_non_tech = get_results(res_non_tech.data)
         req_numbers_non_tech = [r['req_number'] for r in results_non_tech]
         self.assertIn('REQ-LIST-001', req_numbers_non_tech)
-        self.assertNotIn('REQ-LIST-002', req_numbers_non_tech)
 
-        # 4. Scope: My Assigned
-        res_my = self.client.get('/api/procurement/requisitions/?scope=my_assigned')
-        self.assertEqual(res_my.status_code, status.HTTP_200_OK)
-        results_my = get_results(res_my.data)
-        req_numbers_my = [r['req_number'] for r in results_my]
-        self.assertIn('REQ-LIST-001', req_numbers_my)
-        self.assertNotIn('REQ-LIST-002', req_numbers_my)
+        # 5. Filter for technical items for Member 1 returns empty (since Member 1 has only non-tech)
+        res_tech_m1 = self.client.get('/api/procurement/requisitions/?intake_source=technical')
+        self.assertEqual(res_tech_m1.status_code, status.HTTP_200_OK)
+        results_tech_m1 = get_results(res_tech_m1.data)
+        self.assertEqual(len(results_tech_m1), 0)
+
+        # 6. Admin can see all requests
+        admin_user, _ = User.objects.get_or_create(
+            username='admin_test',
+            defaults={'email': 'admin@procuramed.com', 'is_staff': True, 'is_superuser': True}
+        )
+        self.client.force_authenticate(user=admin_user)
+        res_admin = self.client.get('/api/procurement/requisitions/')
+        self.assertEqual(res_admin.status_code, status.HTTP_200_OK)
+        results_admin = get_results(res_admin.data)
+        admin_req_numbers = [r['req_number'] for r in results_admin]
+        self.assertIn('REQ-LIST-001', admin_req_numbers)
+        self.assertIn('REQ-LIST-002', admin_req_numbers)

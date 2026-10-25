@@ -82,10 +82,6 @@ class RequisitionViewSet(viewsets.ModelViewSet):
 
         is_committee = 'committee' in r_name
         if is_committee:
-            if self.action != 'list':
-                # For details/actions, committee members can ONLY access requisitions assigned to them (or requested by them)
-                return qs.filter(Q(assigned_committee_member=user) | Q(requested_by=user))
-
             # Auto-assign any unassigned committee requisitions to ensure all received requests have assignments
             unassigned_qs = Requisition.objects.filter(
                 status=Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW,
@@ -94,22 +90,9 @@ class RequisitionViewSet(viewsets.ModelViewSet):
             for u_req in unassigned_qs:
                 u_req.assign_committee_member(save=True)
 
-            scope = self.request.query_params.get('scope')
-            if scope == 'my_assigned':
-                qs = qs.filter(assigned_committee_member=user)
-            else:
-                committee_statuses = [
-                    Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW,
-                    Requisition.StatusChoices.APPROVED,
-                    Requisition.StatusChoices.RFQ_ISSUED,
-                    Requisition.StatusChoices.QUOTATIONS_RECEIVED,
-                    Requisition.StatusChoices.COMPLETED,
-                ]
-                qs = qs.filter(
-                    Q(assigned_committee_member__isnull=False) |
-                    Q(status__in=committee_statuses) |
-                    Q(requested_by=user)
-                )
+            # Individual request assignment:
+            # Each committee member can ONLY see and process purchase requests assigned directly to them.
+            qs = qs.filter(Q(assigned_committee_member=user) | Q(requested_by=user))
 
             # Category / Intake Source filtering
             intake_filter = self.request.query_params.get('intake_source')
@@ -847,6 +830,14 @@ class RequisitionViewSet(viewsets.ModelViewSet):
         requisition = self.get_object()
         user = request.user
 
+        # Assignment enforcement: Committee member can ONLY approve requests assigned to them
+        is_admin = user.is_superuser or user.is_staff or (user.role and 'admin' in user.role.name.lower())
+        if not is_admin and requisition.assigned_committee_member and requisition.assigned_committee_member != user:
+            return Response(
+                {'detail': 'You cannot approve this purchase request. It is assigned to another committee member.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         # 1. State validation: Must be pending committee review
         if requisition.status != Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW:
             return Response(
@@ -906,6 +897,14 @@ class RequisitionViewSet(viewsets.ModelViewSet):
     def return_clarification(self, request, pk=None):
         requisition = self.get_object()
         user = request.user
+
+        # Assignment enforcement: Committee member can ONLY return requests assigned to them
+        is_admin = user.is_superuser or user.is_staff or (user.role and 'admin' in user.role.name.lower())
+        if not is_admin and requisition.assigned_committee_member and requisition.assigned_committee_member != user:
+            return Response(
+                {'detail': 'You cannot return this purchase request for clarification. It is assigned to another committee member.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         # 1. State validation: Must be pending committee review
         if requisition.status != Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW:
