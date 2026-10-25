@@ -30,12 +30,19 @@ class QuotationRequestFilter(django_filters.FilterSet):
 class QuotationFilter(django_filters.FilterSet):
     quotation_number = django_filters.CharFilter(lookup_expr='icontains')
     quotation_request = django_filters.NumberFilter(field_name='quotation_request__id')
+    rfq_number = django_filters.CharFilter(field_name='quotation_request__rfq_number', lookup_expr='icontains')
+    requisition = django_filters.NumberFilter(field_name='quotation_request__requisition__id')
+    req_number = django_filters.CharFilter(field_name='quotation_request__requisition__req_number', lookup_expr='icontains')
     vendor = django_filters.NumberFilter(field_name='vendor__id')
     status = django_filters.CharFilter(lookup_expr='exact')
+    is_recommended = django_filters.BooleanFilter()
 
     class Meta:
         model = Quotation
-        fields = ['quotation_number', 'quotation_request', 'vendor', 'status']
+        fields = [
+            'quotation_number', 'quotation_request', 'rfq_number',
+            'requisition', 'req_number', 'vendor', 'status', 'is_recommended'
+        ]
 
 
 class PurchaseOrderFilter(django_filters.FilterSet):

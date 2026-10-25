@@ -14,7 +14,8 @@ import {
   HiShoppingBag,
   HiArchive,
   HiBell,
-  HiArrowRight
+  HiArrowRight,
+  HiDocumentText
 } from 'react-icons/hi';
 
 const ProcurementCommitteeDashboardPage = () => {
@@ -259,6 +260,13 @@ const ProcurementCommitteeDashboardPage = () => {
             >
               <HiClipboardList className="w-4 h-4" />
               <span>View Purchase Requests</span>
+            </Link>
+            <Link
+              to="/committee/quotations"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-purple-100 text-purple-800 hover:bg-purple-200 transition-colors"
+            >
+              <HiDocumentText className="w-4 h-4 text-purple-600" />
+              <span>Received Quotations</span>
             </Link>
             <Link
               to="/committee/notifications"

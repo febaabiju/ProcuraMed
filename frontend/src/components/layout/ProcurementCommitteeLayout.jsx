@@ -8,6 +8,7 @@ import ErrorBoundary from '../common/ErrorBoundary';
 import {
   HiHome,
   HiClipboardList,
+  HiDocumentText,
   HiBell,
   HiUserCircle,
   HiLogout,
@@ -46,6 +47,7 @@ const ProcurementCommitteeLayout = ({
   const navItems = [
     { name: 'Dashboard', path: '/committee/dashboard', icon: HiHome },
     { name: 'Purchase Requests', path: '/committee/purchase-requests', icon: HiClipboardList },
+    { name: 'Received Quotations', path: '/committee/quotations', icon: HiDocumentText },
     { name: 'Notifications', path: '/committee/notifications', icon: HiBell },
     { name: 'My Profile', path: '/committee/profile', icon: HiUserCircle },
   ];

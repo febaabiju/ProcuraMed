@@ -556,16 +556,25 @@ class QuotationSerializer(serializers.ModelSerializer):
     items = QuotationItemSerializer(many=True, read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     quotation_document_url = serializers.SerializerMethodField()
+    quotation_request_details = serializers.SerializerMethodField()
+    requisition_details = serializers.SerializerMethodField()
+    recommended_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Quotation
         fields = [
-            'id', 'quotation_number', 'quotation_request', 'vendor', 'vendor_details',
+            'id', 'quotation_number', 'quotation_request', 'quotation_request_details',
+            'requisition_details', 'vendor', 'vendor_details',
             'submission_date', 'valid_until', 'total_amount', 'tax_percentage',
             'tax_amount', 'shipping_charges', 'quotation_document', 'quotation_document_url',
-            'lead_time_days', 'status', 'status_display', 'remarks', 'items', 'created_at', 'updated_at'
+            'lead_time_days', 'status', 'status_display', 'remarks',
+            'evaluation_remarks', 'is_recommended', 'recommended_by', 'recommended_by_name', 'recommended_at',
+            'items', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'quotation_number', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'quotation_number', 'quotation_request_details', 'requisition_details',
+            'recommended_by_name', 'recommended_at', 'created_at', 'updated_at'
+        ]
 
     def validate_quotation_document(self, value):
         if value:
@@ -589,6 +598,57 @@ class QuotationSerializer(serializers.ModelSerializer):
             if request:
                 return request.build_absolute_uri(rel_url)
             return rel_url
+        return None
+
+    def get_quotation_request_details(self, obj):
+        rfq = obj.quotation_request
+        if not rfq:
+            return None
+        return {
+            'id': rfq.id,
+            'rfq_number': rfq.rfq_number,
+            'title': rfq.title,
+            'issue_date': rfq.issue_date.isoformat() if rfq.issue_date else None,
+            'due_date': rfq.due_date.isoformat() if rfq.due_date else None,
+            'status': rfq.status,
+            'status_display': rfq.get_status_display(),
+            'requisition_id': rfq.requisition_id,
+            'requisition_number': rfq.requisition.req_number if rfq.requisition else None,
+            'delivery_requirements': rfq.delivery_requirements,
+            'delivery_location': rfq.delivery_location,
+        }
+
+    def get_requisition_details(self, obj):
+        rfq = obj.quotation_request
+        if not rfq or not rfq.requisition:
+            return None
+        req = rfq.requisition
+        first_item = req.items.first()
+        return {
+            'id': req.id,
+            'req_number': req.req_number,
+            'requisition_number': req.req_number,
+            'title': req.title,
+            'department_name': req.department.name if req.department else 'Hospital Department',
+            'category': req.category,
+            'priority': req.priority,
+            'status': req.status,
+            'status_display': req.get_status_display(),
+            'estimated_budget': str(req.estimated_budget) if req.estimated_budget else '0.00',
+            'item_name': first_item.item_name if first_item else req.title,
+            'quantity': first_item.quantity if first_item else 1,
+            'specifications': first_item.specifications if first_item else (req.justification or ''),
+            'items_count': req.items.count(),
+            'assigned_committee_member_id': req.assigned_committee_member_id,
+            'assigned_committee_member_name': (
+                req.assigned_committee_member.get_full_name() or req.assigned_committee_member.username
+            ) if req.assigned_committee_member else None,
+        }
+
+    def get_recommended_by_name(self, obj):
+        if obj.recommended_by:
+            name = obj.recommended_by.get_full_name()
+            return name.strip() if name and name.strip() else obj.recommended_by.username
         return None
 
 

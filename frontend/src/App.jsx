@@ -37,6 +37,7 @@ import PurchaseOfficerRequisitionsPage from './pages/purchaseOfficer/PurchaseOff
 import PurchaseOfficerPlaceholderPage from './pages/purchaseOfficer/PurchaseOfficerPlaceholderPage';
 import ProcurementCommitteeDashboardPage from './pages/committee/ProcurementCommitteeDashboardPage';
 import ProcurementCommitteePurchaseRequestsPage from './pages/committee/ProcurementCommitteePurchaseRequestsPage';
+import ProcurementCommitteeQuotationsPage from './pages/committee/ProcurementCommitteeQuotationsPage';
 import ProcurementCommitteeNotificationsPage from './pages/committee/ProcurementCommitteeNotificationsPage';
 import ProcurementCommitteeProfilePage from './pages/committee/ProcurementCommitteeProfilePage';
 import TechnicalOfficerDashboardPage from './pages/technicalOfficer/TechnicalOfficerDashboardPage';
@@ -122,6 +123,18 @@ function App() {
                 <ProcurementCommitteePurchaseRequestsPage />
               </ProcurementCommitteeProtectedRoute>
             }
+          />
+          <Route
+            path="/committee/quotations"
+            element={
+              <ProcurementCommitteeProtectedRoute>
+                <ProcurementCommitteeQuotationsPage />
+              </ProcurementCommitteeProtectedRoute>
+            }
+          />
+          <Route
+            path="/committee/received-quotations"
+            element={<Navigate to="/committee/quotations" replace />}
           />
           <Route
             path="/committee/notifications"

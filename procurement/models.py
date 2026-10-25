@@ -1030,8 +1030,9 @@ class RFQVendorInvitation(models.Model):
 
 class Quotation(models.Model):
     class StatusChoices(models.TextChoices):
-        SUBMITTED = 'SUBMITTED', 'Submitted'
+        SUBMITTED = 'SUBMITTED', 'Received'
         UNDER_REVIEW = 'UNDER_REVIEW', 'Under Review'
+        RECOMMENDED = 'RECOMMENDED', 'Recommended'
         ACCEPTED = 'ACCEPTED', 'Accepted'
         REJECTED = 'REJECTED', 'Rejected'
 
@@ -1054,6 +1055,12 @@ class Quotation(models.Model):
         max_length=20, choices=StatusChoices.choices, default=StatusChoices.SUBMITTED
     )
     remarks = models.TextField(blank=True, null=True)
+    evaluation_remarks = models.TextField(blank=True, null=True, verbose_name="Committee Evaluation Remarks")
+    is_recommended = models.BooleanField(default=False, verbose_name="Recommended by Committee")
+    recommended_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='recommended_quotations'
+    )
+    recommended_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

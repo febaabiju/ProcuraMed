@@ -2073,21 +2073,29 @@ class QuotationRequestViewSet(viewsets.ModelViewSet):
 
 
 class QuotationViewSet(viewsets.ModelViewSet):
-    queryset = Quotation.objects.select_related('quotation_request', 'vendor').prefetch_related('items').all()
+    queryset = Quotation.objects.select_related(
+        'quotation_request', 'quotation_request__requisition',
+        'quotation_request__requisition__department', 'vendor', 'recommended_by'
+    ).prefetch_related('items', 'quotation_request__requisition__items').all()
     serializer_class = QuotationSerializer
     permission_classes = [IsAuthenticated]
     filterset_class = QuotationFilter
-    search_fields = ['quotation_number', 'remarks']
+    search_fields = ['quotation_number', 'remarks', 'vendor__company_name', 'quotation_request__rfq_number', 'quotation_request__requisition__req_number']
 
     def get_queryset(self):
         user = self.request.user
         if not user or not user.is_authenticated:
             return Quotation.objects.none()
 
-        qs = Quotation.objects.select_related('quotation_request', 'vendor').prefetch_related('items')
+        qs = Quotation.objects.select_related(
+            'quotation_request', 'quotation_request__requisition',
+            'quotation_request__requisition__department', 'vendor', 'recommended_by'
+        ).prefetch_related('items', 'quotation_request__requisition__items')
         role_name = user.role.name.lower() if user.role else ''
         is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
         is_vendor = 'vendor' in role_name or hasattr(user, 'vendor_profile')
+        is_committee = 'committee' in role_name
+        is_po = 'purchase' in role_name
 
         if is_vendor:
             from vendors.models import Vendor
@@ -2095,6 +2103,17 @@ class QuotationViewSet(viewsets.ModelViewSet):
             if not vendor:
                 return Quotation.objects.none()
             return qs.filter(vendor=vendor).order_by('-created_at')
+        elif is_committee and not is_admin:
+            # Strictly scoped to quotations for purchase requests assigned to this committee member (or RFQs created by them)
+            return qs.filter(
+                Q(quotation_request__requisition__assigned_committee_member=user) |
+                Q(quotation_request__created_by=user)
+            ).order_by('-created_at')
+        elif is_po and not is_admin:
+            return qs.filter(
+                Q(quotation_request__requisition__assigned_purchase_officer=user) |
+                Q(quotation_request__created_by=user)
+            ).order_by('-created_at')
         elif not is_admin:
             return qs.filter(
                 Q(quotation_request__created_by=user) |
@@ -2127,8 +2146,227 @@ class QuotationViewSet(viewsets.ModelViewSet):
             total = sum(item.total_price for item in quotation.items.all())
             quotation.total_amount = total
             quotation.save()
-            return Response(QuotationSerializer(quotation).data, status=status.HTTP_201_CREATED)
+            return Response(QuotationSerializer(quotation, context={'request': request}).data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'], url_path='mark-under-review', permission_classes=[IsAuthenticated])
+    def mark_under_review(self, request, pk=None):
+        """
+        Transition quotation status to UNDER_REVIEW during committee evaluation.
+        """
+        quotation = self.get_object()
+        user = request.user
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
+        req = quotation.quotation_request.requisition if quotation.quotation_request else None
+
+        if not is_admin and req and req.assigned_committee_member_id != user.id:
+            return Response(
+                {'detail': 'You can only review quotations for purchase requests assigned to you.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if quotation.status not in [Quotation.StatusChoices.SUBMITTED, Quotation.StatusChoices.UNDER_REVIEW]:
+            return Response(
+                {'detail': f'Cannot mark quotation in status {quotation.get_status_display()} as under review.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        quotation.status = Quotation.StatusChoices.UNDER_REVIEW
+        quotation.save(update_fields=['status', 'updated_at'])
+
+        AuditLog.objects.create(
+            user=user,
+            action='Quotation Under Review',
+            module='Procurement Committee',
+            description=f"Committee member @{user.username} initiated evaluation for quotation {quotation.quotation_number} from vendor '{quotation.vendor.company_name}'."
+        )
+
+        return Response({
+            'message': f"Quotation {quotation.quotation_number} marked as Under Review.",
+            'quotation': QuotationSerializer(quotation, context={'request': request}).data
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='evaluate', permission_classes=[IsAuthenticated])
+    def evaluate(self, request, pk=None):
+        """
+        Record evaluation remarks for a specific quotation.
+        """
+        quotation = self.get_object()
+        user = request.user
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
+        req = quotation.quotation_request.requisition if quotation.quotation_request else None
+
+        if not is_admin and req and req.assigned_committee_member_id != user.id:
+            return Response(
+                {'detail': 'You can only evaluate quotations for purchase requests assigned to you.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        remarks = request.data.get('evaluation_remarks', '').strip()
+        if not remarks:
+            return Response(
+                {'evaluation_remarks': 'Evaluation remarks are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        quotation.evaluation_remarks = remarks
+        if quotation.status == Quotation.StatusChoices.SUBMITTED:
+            quotation.status = Quotation.StatusChoices.UNDER_REVIEW
+        quotation.save(update_fields=['evaluation_remarks', 'status', 'updated_at'])
+
+        AuditLog.objects.create(
+            user=user,
+            action='Quotation Evaluated',
+            module='Procurement Committee',
+            description=f"Committee member @{user.username} recorded evaluation remarks for quotation {quotation.quotation_number}."
+        )
+
+        return Response({
+            'message': f"Evaluation remarks saved for quotation {quotation.quotation_number}.",
+            'quotation': QuotationSerializer(quotation, context={'request': request}).data
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='recommend', permission_classes=[IsAuthenticated])
+    def recommend(self, request, pk=None):
+        """
+        Recommend this vendor quotation for committee approval and subsequent Purchase Officer contracting.
+        Enforces:
+        - Only assigned committee member or Admin.
+        - Evaluation remarks (justification based on price, specs, delivery) are required.
+        - Sets is_recommended=True, status=RECOMMENDED, recommended_by=user, recommended_at=now.
+        - Resets previously recommended quotation for the same RFQ to UNDER_REVIEW.
+        - Submits recommendation approval record without prematurely marking ACCEPTED or awarding contract.
+        """
+        quotation = self.get_object()
+        user = request.user
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
+        rfq = quotation.quotation_request
+        req = rfq.requisition if rfq else None
+
+        if not is_admin and req and req.assigned_committee_member_id != user.id:
+            return Response(
+                {'detail': 'You can only recommend quotations for purchase requests assigned to you.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if quotation.status in [Quotation.StatusChoices.ACCEPTED, Quotation.StatusChoices.REJECTED]:
+            return Response(
+                {'detail': f'Cannot recommend a quotation that is already {quotation.get_status_display()}.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        remarks = request.data.get('evaluation_remarks', '').strip()
+        if not remarks:
+            return Response(
+                {'evaluation_remarks': 'Recommendation remarks are mandatory (record justification based on price, technical specifications, and delivery timeline).'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        with transaction.atomic():
+            # Reset any previous recommendation for this RFQ
+            if rfq:
+                competing_recommended = Quotation.objects.filter(
+                    quotation_request=rfq,
+                    is_recommended=True
+                ).exclude(id=quotation.id)
+                for comp in competing_recommended:
+                    comp.is_recommended = False
+                    comp.status = Quotation.StatusChoices.UNDER_REVIEW
+                    comp.save(update_fields=['is_recommended', 'status', 'updated_at'])
+
+            quotation.is_recommended = True
+            quotation.status = Quotation.StatusChoices.RECOMMENDED
+            quotation.recommended_by = user
+            quotation.recommended_at = timezone.now()
+            quotation.evaluation_remarks = remarks
+            quotation.save(update_fields=['is_recommended', 'status', 'recommended_by', 'recommended_at', 'evaluation_remarks', 'updated_at'])
+
+            # Record committee recommendation approval entry (pending formal committee approval)
+            if req:
+                committee_name = user.get_full_name() or user.username
+                Approval.objects.create(
+                    requisition=req,
+                    approved_by=user,
+                    stage='Procurement Committee Recommendation',
+                    status=Approval.StatusChoices.PENDING,
+                    comments=(
+                        f"Committee Member @{user.username} ({committee_name}) recommended vendor "
+                        f"'{quotation.vendor.company_name}' (Quotation {quotation.quotation_number}, "
+                        f"Total: ₹{quotation.total_amount:,.2f}, Lead Time: {quotation.lead_time_days or 'N/A'} days). "
+                        f"Justification: {remarks}"
+                    )
+                )
+
+            AuditLog.objects.create(
+                user=user,
+                action='Vendor Quotation Recommended',
+                module='Procurement Committee',
+                description=(
+                    f"Committee member @{user.username} recommended quotation {quotation.quotation_number} "
+                    f"from vendor '{quotation.vendor.company_name}' for purchase request {req.req_number if req else 'N/A'}. "
+                    f"Justification: {remarks}"
+                )
+            )
+
+        return Response({
+            'message': f"Quotation {quotation.quotation_number} from '{quotation.vendor.company_name}' successfully recommended for committee approval.",
+            'quotation': QuotationSerializer(quotation, context={'request': request}).data
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], url_path='compare', permission_classes=[IsAuthenticated])
+    def compare(self, request):
+        """
+        Compare all quotations received for a specific RFQ or Requisition side-by-side.
+        Returns quote matrix, price ranking, delivery speed, and evaluation details.
+        """
+        rfq_id = request.query_params.get('rfq_id')
+        req_id = request.query_params.get('requisition_id')
+        if not rfq_id and not req_id:
+            return Response({'detail': 'rfq_id or requisition_id parameter is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = request.user
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
+
+        rfq = None
+        if rfq_id:
+            rfq = QuotationRequest.objects.select_related('requisition', 'requisition__department', 'created_by').prefetch_related('items', 'requisition__items').filter(id=rfq_id).first()
+        elif req_id:
+            rfq = QuotationRequest.objects.select_related('requisition', 'requisition__department', 'created_by').prefetch_related('items', 'requisition__items').filter(requisition_id=req_id).order_by('-created_at').first()
+
+        if not rfq:
+            return Response({'detail': 'No Request for Quotation found for the specified reference.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not is_admin and rfq.requisition and rfq.requisition.assigned_committee_member_id != user.id and rfq.created_by_id != user.id:
+            return Response({'detail': 'You can only compare quotations for purchase requests assigned to your queue.'}, status=status.HTTP_403_FORBIDDEN)
+
+        quotations = Quotation.objects.filter(quotation_request=rfq).select_related('vendor', 'recommended_by').prefetch_related('items').order_by('total_amount')
+        quote_data = QuotationSerializer(quotations, many=True, context={'request': request}).data
+
+        lowest_price = None
+        fastest_delivery = None
+        recommended_id = None
+        if quotations.exists():
+            lowest_quote = min(quotations, key=lambda q: q.total_amount)
+            lowest_price = lowest_quote.id
+            valid_lead = [q for q in quotations if q.lead_time_days]
+            if valid_lead:
+                fastest_delivery = min(valid_lead, key=lambda q: q.lead_time_days).id
+            rec_quote = quotations.filter(is_recommended=True).first()
+            if rec_quote:
+                recommended_id = rec_quote.id
+
+        return Response({
+            'rfq': QuotationRequestSerializer(rfq, context={'request': request}).data,
+            'quotations': quote_data,
+            'quotations_count': len(quote_data),
+            'lowest_price_quotation_id': lowest_price,
+            'fastest_delivery_quotation_id': fastest_delivery,
+            'recommended_quotation_id': recommended_id,
+        }, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='accept', permission_classes=[IsAuthenticated])
     def accept(self, request, pk=None):
@@ -2176,11 +2414,22 @@ class QuotationViewSet(viewsets.ModelViewSet):
     def reject(self, request, pk=None):
         quotation = self.get_object()
         user = request.user
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
+        req = quotation.quotation_request.requisition if quotation.quotation_request else None
+
+        if not is_admin and req and req.assigned_committee_member_id != user.id:
+            return Response(
+                {'detail': 'You can only reject quotations for purchase requests assigned to you.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         reason = request.data.get('reason', 'Quotation evaluated and rejected by Procurement Committee.')
 
         quotation.status = Quotation.StatusChoices.REJECTED
+        quotation.is_recommended = False
         quotation.remarks = f"{quotation.remarks or ''}\n[Rejected: {reason}]".strip()
-        quotation.save(update_fields=['status', 'remarks', 'updated_at'])
+        quotation.save(update_fields=['status', 'is_recommended', 'remarks', 'updated_at'])
 
         AuditLog.objects.create(
             user=user,
@@ -2197,7 +2446,7 @@ class QuotationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='document', permission_classes=[AllowAny])
     def document(self, request, pk=None):
         try:
-            quotation = Quotation.objects.select_related('quotation_request', 'vendor__user').get(pk=pk)
+            quotation = Quotation.objects.select_related('quotation_request', 'quotation_request__requisition', 'vendor__user').get(pk=pk)
         except Quotation.DoesNotExist:
             from django.http import Http404
             raise Http404("Quotation not found.")
@@ -2230,6 +2479,13 @@ class QuotationViewSet(viewsets.ModelViewSet):
             (hasattr(user, 'vendor_profile') and user.vendor_profile == quotation.vendor) or
             (quotation.vendor and quotation.vendor.user == user)
         )
+
+        if is_committee and not is_admin_or_super:
+            req = quotation.quotation_request.requisition if quotation.quotation_request else None
+            is_assigned = (req and req.assigned_committee_member_id == user.id) or (quotation.quotation_request and quotation.quotation_request.created_by_id == user.id)
+            if not is_assigned:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("You can only access documents for quotations associated with your assigned purchase requests.")
 
         if not (is_admin_or_super or is_committee or is_po or is_owner_vendor):
             from rest_framework.exceptions import PermissionDenied
