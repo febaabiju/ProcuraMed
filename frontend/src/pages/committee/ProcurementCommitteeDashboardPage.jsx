@@ -1,11 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import axiosClient from '../../api/axiosClient';
 import ProcurementCommitteeLayout from '../../components/layout/ProcurementCommitteeLayout';
 import Button from '../../components/common/Button';
 import {
-  HiHome,
   HiClipboardList,
   HiClipboardCheck,
   HiCheckCircle,
@@ -96,19 +94,27 @@ const ProcurementCommitteeDashboardPage = () => {
       onRefresh={fetchDashboardData}
     >
       <div className="space-y-6 max-w-7xl mx-auto">
-        {/* Error Notification */}
+        {/* Error Notification with Retry */}
         {error && (
           <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-center justify-between shadow-xs">
             <div className="flex items-center gap-2">
               <HiInformationCircle className="w-5 h-5 text-rose-600 flex-shrink-0" />
               <span>{error}</span>
             </div>
-            <button
-              onClick={() => setError('')}
-              className="text-rose-500 hover:text-rose-700 text-xs font-bold"
-            >
-              Dismiss
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={fetchDashboardData}
+                className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-bold text-xs hover:bg-rose-700 transition"
+              >
+                Retry
+              </button>
+              <button
+                onClick={() => setError('')}
+                className="text-rose-500 hover:text-rose-700 text-xs font-bold px-1"
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         )}
 

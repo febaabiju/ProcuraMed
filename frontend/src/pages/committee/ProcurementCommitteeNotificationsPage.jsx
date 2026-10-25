@@ -3,7 +3,6 @@ import axiosClient from '../../api/axiosClient';
 import ProcurementCommitteeLayout from '../../components/layout/ProcurementCommitteeLayout';
 import {
   HiBell,
-  HiCheckCircle,
   HiClipboardCheck,
   HiDocumentText,
   HiSearch,
@@ -101,16 +100,24 @@ const ProcurementCommitteeNotificationsPage = () => {
       onRefresh={fetchNotifications}
     >
       <div className="space-y-6 max-w-5xl mx-auto">
-        {/* Error Alert */}
+        {/* Error Alert with Retry */}
         {error && (
           <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-center justify-between shadow-xs">
             <div className="flex items-center gap-2.5">
               <HiInformationCircle className="w-5 h-5 text-rose-600 flex-shrink-0" />
               <span>{error}</span>
             </div>
-            <button onClick={() => setError('')} className="text-rose-500 hover:text-rose-700">
-              <HiX className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={fetchNotifications}
+                className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-bold text-xs hover:bg-rose-700 transition"
+              >
+                Retry
+              </button>
+              <button onClick={() => setError('')} className="text-rose-500 hover:text-rose-700">
+                <HiX className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         )}
 
@@ -183,6 +190,25 @@ const ProcurementCommitteeNotificationsPage = () => {
             <div className="p-12 text-center text-slate-400 text-xs font-semibold flex flex-col items-center gap-2">
               <HiRefresh className="w-5 h-5 animate-spin text-violet-500" />
               <span>Loading notifications...</span>
+            </div>
+          ) : error && data.notifications.length === 0 ? (
+            <div className="p-12 text-center space-y-3 bg-rose-50/50 rounded-2xl border border-rose-100">
+              <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+                <HiInformationCircle className="w-6 h-6" />
+              </div>
+              <h4 className="text-xs font-bold text-slate-800">
+                Failed to load notifications
+              </h4>
+              <p className="text-[11px] text-slate-500 max-w-md mx-auto">
+                {error}
+              </p>
+              <button
+                onClick={fetchNotifications}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold transition-colors"
+              >
+                <HiRefresh className="w-3.5 h-3.5" />
+                <span>Retry</span>
+              </button>
             </div>
           ) : filteredNotifications.length === 0 ? (
             <div className="p-12 text-center space-y-3 bg-slate-50/50 rounded-2xl">

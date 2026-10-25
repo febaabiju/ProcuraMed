@@ -4,12 +4,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../../context/AuthContext';
 import ProcuraMedLogo from '../common/ProcuraMedLogo';
 import Button from '../common/Button';
+import ErrorBoundary from '../common/ErrorBoundary';
 import {
   HiHome,
   HiClipboardList,
-  HiClipboardCheck,
-  HiCheckCircle,
-  HiArchive,
   HiBell,
   HiUserCircle,
   HiLogout,
@@ -17,9 +15,7 @@ import {
   HiX,
   HiRefresh,
   HiShieldCheck,
-  HiUserGroup,
-  HiDocumentText,
-  HiOutlineSparkles
+  HiUserGroup
 } from 'react-icons/hi';
 
 const ProcurementCommitteeLayout = ({
@@ -45,7 +41,6 @@ const ProcurementCommitteeLayout = ({
   const currentUser = committeeUser || authUser;
   const displayName = currentUser?.full_name || currentUser?.first_name || currentUser?.username || 'Committee Member';
   const employeeId = currentUser?.employee_id || 'PC-STAFF';
-  const roleTitle = currentUser?.role || 'Procurement Committee Member';
   const usernameHandle = currentUser?.username ? `@${currentUser.username}` : '@committee';
 
   const navItems = [
@@ -220,7 +215,9 @@ const ProcurementCommitteeLayout = ({
 
         {/* Page Content View */}
         <main className="flex-1 p-4 sm:p-8 max-w-7xl w-full mx-auto">
-          {children}
+          <ErrorBoundary key={location.pathname} onReset={onRefresh}>
+            {children}
+          </ErrorBoundary>
         </main>
       </div>
 

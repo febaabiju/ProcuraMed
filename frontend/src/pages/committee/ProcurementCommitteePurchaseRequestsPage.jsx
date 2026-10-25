@@ -6,22 +6,16 @@ import ProcurementCommitteeLayout from '../../components/layout/ProcurementCommi
 import Button from '../../components/common/Button';
 import {
   HiSearch,
-  HiFilter,
   HiRefresh,
   HiClipboardList,
   HiCheckCircle,
-  HiExclamationCircle,
   HiInformationCircle,
-  HiUser,
   HiOfficeBuilding,
   HiCalendar,
   HiTag,
   HiX,
   HiShieldCheck,
-  HiClock,
-  HiEye,
-  HiDocumentText,
-  HiChevronRight
+  HiEye
 } from 'react-icons/hi';
 
 const ProcurementCommitteePurchaseRequestsPage = () => {
@@ -99,7 +93,7 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
 
       return true;
     });
-  }, [requisitions, activeTab, assignmentFilter, searchQuery, authUser]);
+  }, [requisitions, activeTab, searchQuery]);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return 'N/A';
@@ -178,19 +172,27 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
       onRefresh={fetchRequisitions}
     >
       <div className="space-y-6 max-w-7xl mx-auto pb-12">
-        {/* Error Notification */}
+        {/* Error Notification with Retry */}
         {error && (
           <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-center justify-between shadow-xs">
             <div className="flex items-center gap-2">
               <HiInformationCircle className="w-5 h-5 text-rose-600 flex-shrink-0" />
               <span>{error}</span>
             </div>
-            <button
-              onClick={() => setError('')}
-              className="text-rose-500 hover:text-rose-700 text-xs font-bold"
-            >
-              Dismiss
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={fetchRequisitions}
+                className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-bold text-xs hover:bg-rose-700 transition"
+              >
+                Retry
+              </button>
+              <button
+                onClick={() => setError('')}
+                className="text-rose-500 hover:text-rose-700 text-xs font-bold px-1"
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         )}
 
@@ -307,6 +309,25 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
             <HiRefresh className="w-8 h-8 text-violet-500 animate-spin mx-auto" />
             <p className="text-xs font-semibold text-slate-500">Loading purchase requests...</p>
           </div>
+        ) : error && requisitions.length === 0 ? (
+          <div className="bg-white rounded-3xl p-12 border border-rose-100 shadow-xs text-center space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto border border-rose-100">
+              <HiInformationCircle className="w-7 h-7" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-sm font-bold text-slate-800">Unable to Load Purchase Requests</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">{error}</p>
+            </div>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={fetchRequisitions}
+              className="bg-violet-600 hover:bg-violet-700 text-white font-bold gap-1.5 text-xs mx-auto"
+            >
+              <HiRefresh className="w-3.5 h-3.5" />
+              <span>Retry Loading Requests</span>
+            </Button>
+          </div>
         ) : filteredRequisitions.length === 0 ? (
           <div className="bg-white rounded-3xl p-12 border border-violet-100 shadow-xs text-center space-y-3">
             <div className="w-12 h-12 rounded-2xl bg-slate-50 text-slate-400 flex items-center justify-center mx-auto">
@@ -317,17 +338,16 @@ const ProcurementCommitteePurchaseRequestsPage = () => {
               {searchQuery
                 ? `No requests match your search "${searchQuery}". Try clearing the search.`
                 : activeTab === 'TECHNICAL'
-                ? 'No purchase requests with completed technical evaluation are currently in the committee queue.'
+                ? 'No purchase requests with completed technical evaluation are currently in your queue.'
                 : activeTab === 'NON_TECHNICAL'
-                ? 'No routine purchase requests without technical evaluation are currently in the committee queue.'
-                : 'No purchase requests have been forwarded to the Procurement Committee yet.'}
+                ? 'No routine purchase requests without technical evaluation are currently in your queue.'
+                : 'No purchase requests are currently assigned to your committee queue.'}
             </p>
-            {(searchQuery || activeTab !== 'ALL' || assignmentFilter !== 'ALL') && (
+            {(searchQuery || activeTab !== 'ALL') && (
               <button
                 onClick={() => {
                   setSearchQuery('');
                   setActiveTab('ALL');
-                  setAssignmentFilter('ALL');
                 }}
                 className="text-xs font-bold text-violet-600 hover:text-violet-800 underline"
               >
