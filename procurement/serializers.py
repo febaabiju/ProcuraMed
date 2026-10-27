@@ -984,6 +984,10 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
     )
     vendor_details = VendorSerializer(source='vendor', read_only=True)
     created_by_details = UserSerializer(source='created_by', read_only=True)
+    acknowledged_by_details = UserSerializer(source='acknowledged_by', read_only=True)
+    portal_visible = serializers.BooleanField(read_only=True)
+    acknowledgment_status = serializers.CharField(read_only=True)
+    delivery_status = serializers.SerializerMethodField()
     items = PurchaseOrderItemSerializer(many=True, read_only=True)
 
     class Meta:
@@ -992,13 +996,38 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             'id', 'po_number', 'requisition', 'requisition_details', 'quotation',
             'quotation_details', 'vendor', 'vendor_details',
             'created_by', 'created_by_details', 'total_amount', 'order_date',
-            'expected_delivery_date', 'terms_and_conditions', 'status', 'status_display',
+            'expected_delivery_date', 'delivery_location', 'delivery_instructions',
+            'terms_and_conditions', 'status', 'status_display',
+            'is_acknowledged', 'acknowledged_at', 'acknowledged_by',
+            'acknowledged_by_details', 'acknowledgment_notes', 'acknowledgment_status',
+            'portal_visible', 'delivery_status',
             'items', 'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'po_number', 'requisition_details', 'quotation_details',
-            'status_display', 'created_by', 'created_at', 'updated_at'
+            'status_display', 'is_acknowledged', 'acknowledged_at', 'acknowledged_by',
+            'acknowledged_by_details', 'acknowledgment_status', 'portal_visible',
+            'delivery_status', 'created_by', 'created_at', 'updated_at'
         ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if not data.get('delivery_location'):
+            data['delivery_location'] = instance.resolved_delivery_location
+        if not data.get('delivery_instructions'):
+            data['delivery_instructions'] = instance.resolved_delivery_instructions
+        return data
+
+    def get_delivery_status(self, obj):
+        latest_delivery = obj.deliveries.order_by('-created_at').first()
+        if latest_delivery:
+            return latest_delivery.get_status_display()
+        if obj.status == PurchaseOrder.StatusChoices.DELIVERED:
+            return 'Delivered'
+        if obj.status == PurchaseOrder.StatusChoices.PARTIALLY_DELIVERED:
+            return 'Partially Delivered'
+        return 'Pending Dispatch'
+
 
     def get_requisition_details(self, obj):
         if not obj.requisition:

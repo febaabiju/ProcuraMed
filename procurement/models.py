@@ -1141,7 +1141,10 @@ class QuotationItem(models.Model):
 
 class PurchaseOrder(models.Model):
     class StatusChoices(models.TextChoices):
+        DRAFT = 'DRAFT', 'Draft'
         ISSUED = 'ISSUED', 'Issued'
+        ACKNOWLEDGED = 'ACKNOWLEDGED', 'Vendor Acknowledged'
+        VENDOR_ACKNOWLEDGED = 'VENDOR_ACKNOWLEDGED', 'Vendor Acknowledged'
         PARTIALLY_DELIVERED = 'PARTIALLY_DELIVERED', 'Partially Delivered'
         DELIVERED = 'DELIVERED', 'Delivered'
         INSPECTED = 'INSPECTED', 'Inspected'
@@ -1164,10 +1167,19 @@ class PurchaseOrder(models.Model):
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     order_date = models.DateField(auto_now_add=True)
     expected_delivery_date = models.DateField(null=True, blank=True)
+    delivery_location = models.CharField(max_length=255, blank=True, null=True, verbose_name="Delivery Location")
+    delivery_instructions = models.TextField(blank=True, null=True, verbose_name="Delivery Instructions")
     terms_and_conditions = models.TextField(blank=True, null=True)
     status = models.CharField(
         max_length=30, choices=StatusChoices.choices, default=StatusChoices.ISSUED
     )
+    is_acknowledged = models.BooleanField(default=False, verbose_name="Is Acknowledged")
+    acknowledged_at = models.DateTimeField(null=True, blank=True, verbose_name="Acknowledged At")
+    acknowledged_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='acknowledged_purchase_orders', verbose_name="Acknowledged By"
+    )
+    acknowledgment_notes = models.TextField(blank=True, null=True, verbose_name="Acknowledgment Notes")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1176,6 +1188,34 @@ class PurchaseOrder(models.Model):
         verbose_name = 'Purchase Order'
         verbose_name_plural = 'Purchase Orders'
         ordering = ['-created_at']
+
+    @property
+    def portal_visible(self):
+        return bool(self.vendor and self.vendor.is_active and self.vendor.user and self.vendor.user.is_active)
+
+    @property
+    def acknowledgment_status(self):
+        if self.is_acknowledged or self.status in [self.StatusChoices.ACKNOWLEDGED, self.StatusChoices.VENDOR_ACKNOWLEDGED]:
+            return 'Vendor Acknowledged'
+        return 'Pending Acknowledgment'
+
+    @property
+    def resolved_delivery_location(self):
+        if self.delivery_location:
+            return self.delivery_location
+        if self.quotation and hasattr(self.quotation, 'quotation_request') and self.quotation.quotation_request and self.quotation.quotation_request.delivery_location:
+            return self.quotation.quotation_request.delivery_location
+        if self.requisition and self.requisition.department:
+            return f"Hospital {self.requisition.department.name} Receiving Bay"
+        return "Hospital Central Procurement Stores"
+
+    @property
+    def resolved_delivery_instructions(self):
+        if self.delivery_instructions:
+            return self.delivery_instructions
+        if self.terms_and_conditions:
+            return self.terms_and_conditions
+        return "Standard hospital receiving hours: Monday-Friday 08:00 - 16:00. Consignment note and invoice must accompany delivery."
 
     def save(self, *args, **kwargs):
         if not self.po_number:
@@ -1186,6 +1226,7 @@ class PurchaseOrder(models.Model):
 
     def __str__(self):
         return f"{self.po_number} - {self.vendor}"
+
 
 
 class PurchaseOrderItem(models.Model):

@@ -737,8 +737,11 @@ class VendorDashboardView(APIView):
                 'quotation_number': po.quotation.quotation_number if po.quotation else 'N/A',
                 'order_date': po.order_date,
                 'expected_delivery_date': po.expected_delivery_date,
+                'delivery_location': po.delivery_location or po.resolved_delivery_location,
                 'total_amount': po.total_amount,
                 'status': po.status,
+                'is_acknowledged': po.is_acknowledged or po.status in ['ACKNOWLEDGED', 'VENDOR_ACKNOWLEDGED'],
+                'acknowledged_at': po.acknowledged_at,
             })
 
         # 6. Active Deliveries

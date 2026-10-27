@@ -2843,6 +2843,19 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         else:
             total_amount = Decimal('0.00')
 
+        # Resolve delivery location and delivery instructions
+        delivery_location = request.data.get('delivery_location')
+        if not delivery_location and quote and hasattr(quote, 'quotation_request') and quote.quotation_request:
+            delivery_location = quote.quotation_request.delivery_location
+        if not delivery_location and req and req.department:
+            delivery_location = f"Hospital {req.department.name} Receiving Bay"
+        if not delivery_location:
+            delivery_location = "Hospital Central Procurement Stores"
+
+        delivery_instructions = request.data.get('delivery_instructions') or request.data.get('remarks', '')
+        if not delivery_instructions and terms_and_conditions:
+            delivery_instructions = terms_and_conditions
+
         with transaction.atomic():
             po = PurchaseOrder.objects.create(
                 requisition=req,
@@ -2851,6 +2864,8 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
                 created_by=user,
                 total_amount=total_amount,
                 expected_delivery_date=expected_delivery_date if expected_delivery_date else None,
+                delivery_location=delivery_location,
+                delivery_instructions=delivery_instructions,
                 terms_and_conditions=terms_and_conditions,
                 status=PurchaseOrder.StatusChoices.ISSUED
             )
@@ -2902,6 +2917,110 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(po)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        user = request.user
+        r_name = user.role.name.lower() if user.role else ''
+        is_vendor = 'vendor' in r_name or hasattr(user, 'vendor_profile')
+        if is_vendor:
+            from vendors.models import Vendor
+            vendor = getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+            if not vendor or instance.vendor_id != vendor.id:
+                return Response(
+                    {'detail': 'You do not have permission to view this purchase order.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+    def update(self, request, *args, **kwargs):
+        user = request.user
+        r_name = user.role.name.lower() if user.role else ''
+        is_po = ('purchase' in r_name or 'purchase officer' in r_name) and not ('staff' in r_name)
+        is_admin = user.is_superuser or user.is_staff or 'admin' in r_name
+        if not (is_po or is_admin):
+            return Response(
+                {'detail': 'Only authorized Purchase Officers and Administrators can modify purchase orders.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        user = request.user
+        r_name = user.role.name.lower() if user.role else ''
+        is_po = ('purchase' in r_name or 'purchase officer' in r_name) and not ('staff' in r_name)
+        is_admin = user.is_superuser or user.is_staff or 'admin' in r_name
+        if not (is_po or is_admin):
+            return Response(
+                {'detail': 'Only authorized Purchase Officers and Administrators can modify purchase orders.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        user = request.user
+        r_name = user.role.name.lower() if user.role else ''
+        is_po = ('purchase' in r_name or 'purchase officer' in r_name) and not ('staff' in r_name)
+        is_admin = user.is_superuser or user.is_staff or 'admin' in r_name
+        if not (is_po or is_admin):
+            return Response(
+                {'detail': 'Only authorized Purchase Officers and Administrators can delete purchase orders.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=['post'], url_path='acknowledge', permission_classes=[IsAuthenticated])
+    def acknowledge(self, request, pk=None):
+        po = self.get_object()
+        user = request.user
+
+        from vendors.models import Vendor
+        vendor = getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+        r_name = user.role.name.lower() if user.role else ''
+        is_vendor = 'vendor' in r_name or vendor is not None
+
+        if not is_vendor or not vendor or po.vendor_id != vendor.id:
+            return Response(
+                {'detail': 'Only the assigned vendor can acknowledge this purchase order.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if po.is_acknowledged or po.status in [PurchaseOrder.StatusChoices.ACKNOWLEDGED, PurchaseOrder.StatusChoices.VENDOR_ACKNOWLEDGED]:
+            return Response(
+                {
+                    'detail': f'Purchase Order {po.po_number} has already been acknowledged.',
+                    'acknowledged_at': po.acknowledged_at.isoformat() if po.acknowledged_at else None
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        notes = request.data.get('notes', '') or request.data.get('acknowledgment_notes', '')
+
+        with transaction.atomic():
+            po.is_acknowledged = True
+            po.acknowledged_at = timezone.now()
+            po.acknowledged_by = user
+            po.acknowledgment_notes = str(notes).strip() if notes else 'Order acknowledged by vendor partner.'
+            po.status = PurchaseOrder.StatusChoices.ACKNOWLEDGED
+            po.save(update_fields=[
+                'is_acknowledged', 'acknowledged_at', 'acknowledged_by',
+                'acknowledgment_notes', 'status', 'updated_at'
+            ])
+
+            AuditLog.objects.create(
+                user=user,
+                action='Purchase Order Acknowledged',
+                module='Vendor Portal',
+                description=(
+                    f"Vendor '{vendor.company_name}' acknowledged Purchase Order {po.po_number} "
+                    f"on {po.acknowledged_at.strftime('%Y-%m-%d %H:%M:%S')}."
+                )
+            )
+
+        serializer = self.get_serializer(po)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 
 

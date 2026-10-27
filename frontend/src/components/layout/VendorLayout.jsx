@@ -51,7 +51,7 @@ const VendorLayout = ({
     { name: 'Supply Categories', path: '/vendor/supply-categories', icon: HiTag },
     { name: 'Purchase Requests / Quotation Requests', path: '/vendor/opportunities', icon: HiClipboardList },
     { name: 'Quotations', path: '/vendor/quotations', icon: HiDocumentText },
-    { name: 'Purchase Orders', path: '/vendor/purchase-orders', icon: HiShoppingBag },
+    { name: 'My Purchase Orders', path: '/vendor/purchase-orders', icon: HiShoppingBag },
     { name: 'Deliveries', path: '/vendor/deliveries', icon: HiTruck },
     { name: 'Invoices', path: '/vendor/invoices', icon: HiCreditCard },
     { name: 'Messages / Notifications', path: '/vendor/notifications', icon: HiBell },

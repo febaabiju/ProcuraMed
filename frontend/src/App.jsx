@@ -26,6 +26,7 @@ import VendorProductsPage from './pages/vendor/VendorProductsPage';
 import VendorSupplyCategoriesPage from './pages/vendor/VendorSupplyCategoriesPage';
 import VendorOpportunitiesPage from './pages/vendor/VendorOpportunitiesPage';
 import VendorQuotationsPage from './pages/vendor/VendorQuotationsPage';
+import VendorPurchaseOrdersPage from './pages/vendor/VendorPurchaseOrdersPage';
 import VendorChangePasswordPage from './pages/vendor/VendorChangePasswordPage';
 import VendorPlaceholderPage from './pages/vendor/VendorPlaceholderPage';
 import DepartmentStaffDashboardPage from './pages/staff/DepartmentStaffDashboardPage';
@@ -35,6 +36,7 @@ import StaffPlaceholderPage from './pages/staff/StaffPlaceholderPage';
 import PurchaseOfficerDashboardPage from './pages/purchaseOfficer/PurchaseOfficerDashboardPage';
 import PurchaseOfficerRequisitionsPage from './pages/purchaseOfficer/PurchaseOfficerRequisitionsPage';
 import PurchaseOfficerApprovedSelectionsPage from './pages/purchaseOfficer/PurchaseOfficerApprovedSelectionsPage';
+import PurchaseOfficerPurchaseOrdersPage from './pages/purchaseOfficer/PurchaseOfficerPurchaseOrdersPage';
 import PurchaseOfficerPlaceholderPage from './pages/purchaseOfficer/PurchaseOfficerPlaceholderPage';
 import ProcurementCommitteeDashboardPage from './pages/committee/ProcurementCommitteeDashboardPage';
 import ProcurementCommitteePurchaseRequestsPage from './pages/committee/ProcurementCommitteePurchaseRequestsPage';
@@ -207,7 +209,7 @@ function App() {
             path="/purchase-officer/purchase-orders"
             element={
               <PurchaseOfficerProtectedRoute>
-                <PurchaseOfficerPlaceholderPage path="/purchase-officer/purchase-orders" />
+                <PurchaseOfficerPurchaseOrdersPage />
               </PurchaseOfficerProtectedRoute>
             }
           />
@@ -355,7 +357,7 @@ function App() {
             path="/vendor/purchase-orders"
             element={
               <VendorProtectedRoute>
-                <VendorPlaceholderPage path="/vendor/purchase-orders" />
+                <VendorPurchaseOrdersPage />
               </VendorProtectedRoute>
             }
           />

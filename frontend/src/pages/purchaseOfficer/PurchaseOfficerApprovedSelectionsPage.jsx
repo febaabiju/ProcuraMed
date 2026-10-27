@@ -39,6 +39,8 @@ const PurchaseOfficerApprovedSelectionsPage = () => {
   // Create PO Modal state
   const [selectedForPO, setSelectedForPO] = useState(null);
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState('');
+  const [deliveryLocation, setDeliveryLocation] = useState('');
+  const [deliveryInstructions, setDeliveryInstructions] = useState('');
   const [termsAndConditions, setTermsAndConditions] = useState('');
   const [customTotalAmount, setCustomTotalAmount] = useState('');
   const [submittingPO, setSubmittingPO] = useState(false);
@@ -137,9 +139,14 @@ const PurchaseOfficerApprovedSelectionsPage = () => {
       setExpectedDeliveryDate(defaultDate.toISOString().split('T')[0]);
     }
 
+    // Default Delivery Location & Instructions
+    const loc = sel.department_name ? `Hospital ${sel.department_name} Receiving Bay` : 'Central Hospital Biomedical Store, Receiving Bay A';
+    setDeliveryLocation(loc);
+    setDeliveryInstructions('Standard hospital receiving hours: Monday-Friday 08:00 - 16:00. Consignment note and invoice must accompany delivery.');
+
     // Default terms & conditions
     setTermsAndConditions(
-      `1. Delivery Location: Central Hospital Biomedical Store, Receiving Bay A.\n` +
+      `1. Delivery Location: ${loc}.\n` +
       `2. Inspection: Supplies are subject to physical inspection and technical acceptance.\n` +
       `3. Payment Terms: Payment within 30 days of complete delivery and certification of satisfactory installation.\n` +
       `4. Warranty & Support: Supplier shall honor full comprehensive warranty per approved quotation.`
@@ -165,6 +172,8 @@ const PurchaseOfficerApprovedSelectionsPage = () => {
         quotation: selectedForPO.selected_quotation,
         vendor: selectedForPO.selected_vendor,
         expected_delivery_date: expectedDeliveryDate,
+        delivery_location: deliveryLocation.trim(),
+        delivery_instructions: deliveryInstructions.trim(),
         terms_and_conditions: termsAndConditions.trim(),
         total_amount: customTotalAmount
       };
@@ -172,7 +181,7 @@ const PurchaseOfficerApprovedSelectionsPage = () => {
       const res = await axiosClient.post('/procurement/purchase-orders/', payload);
 
       setPoSuccessMessage(
-        `Purchase Order ${res.data.po_number} created successfully! Procurement workflow updated.`
+        `Purchase Order ${res.data.po_number} created successfully! Automatically available in the Vendor Portal.`
       );
       setSelectedForPO(null);
       await fetchSelections();
@@ -709,6 +718,34 @@ const PurchaseOfficerApprovedSelectionsPage = () => {
                       onChange={(e) => setCustomTotalAmount(e.target.value)}
                       placeholder="Enter verified total order amount"
                       className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-mono font-bold focus:ring-2 focus:ring-violet-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Delivery Location Field */}
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-800 block">
+                      Delivery Location
+                    </label>
+                    <input
+                      type="text"
+                      value={deliveryLocation}
+                      onChange={(e) => setDeliveryLocation(e.target.value)}
+                      placeholder="e.g. Central Hospital Biomedical Store, Receiving Bay A"
+                      className="w-full p-2.5 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-violet-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Delivery Instructions Field */}
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-800 block">
+                      Delivery Instructions &amp; Remarks
+                    </label>
+                    <input
+                      type="text"
+                      value={deliveryInstructions}
+                      onChange={(e) => setDeliveryInstructions(e.target.value)}
+                      placeholder="e.g. Receiving hours Mon-Fri 08:00 - 16:00, consignment note required"
+                      className="w-full p-2.5 rounded-xl border border-slate-200 text-xs focus:ring-2 focus:ring-violet-500 focus:outline-none"
                     />
                   </div>
 
