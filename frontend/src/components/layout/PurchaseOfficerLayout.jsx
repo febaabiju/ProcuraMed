@@ -7,10 +7,7 @@ import Button from '../common/Button';
 import {
   HiHome,
   HiClipboardList,
-  HiTag,
-  HiDocumentText,
   HiShoppingBag,
-  HiOfficeBuilding,
   HiTruck,
   HiBell,
   HiUserCircle,
@@ -51,11 +48,8 @@ const PurchaseOfficerLayout = ({
   const navItems = [
     { name: 'Dashboard', path: '/purchase-officer/dashboard', icon: HiHome },
     { name: 'Purchase Requisitions', path: '/purchase-officer/requisitions', icon: HiClipboardList },
-    { name: 'Procurement Opportunities', path: '/purchase-officer/opportunities', icon: HiTag },
-    { name: 'Quotation Management', path: '/purchase-officer/quotations', icon: HiDocumentText },
     { name: 'Approved Vendor Selections', path: '/purchase-officer/approved-vendor-selections', icon: HiBadgeCheck },
     { name: 'Purchase Orders', path: '/purchase-officer/purchase-orders', icon: HiShoppingBag },
-    { name: 'Vendor Management', path: '/purchase-officer/vendors', icon: HiOfficeBuilding },
     { name: 'Delivery Management', path: '/purchase-officer/deliveries', icon: HiTruck },
     { name: 'Invoice & Payment Tracking', path: '/purchase-officer/invoices', icon: HiReceiptTax },
     { name: 'Notifications', path: '/purchase-officer/notifications', icon: HiBell },

@@ -33,7 +33,8 @@ import {
   HiXCircle,
   HiExternalLink,
   HiOutlineDownload,
-  HiExclamationCircle
+  HiExclamationCircle,
+  HiReceiptTax
 } from 'react-icons/hi';
 
 const APPROVED_SPECIALIZATIONS = [
@@ -400,14 +401,14 @@ const PurchaseOfficerDashboardPage = () => {
                 </Button>
               </Link>
 
-              <Link to="/purchase-officer/opportunities">
+              <Link to="/purchase-officer/invoices">
                 <Button
                   variant="primary"
                   size="md"
                   className="bg-white text-violet-900 hover:bg-violet-50 font-bold text-xs gap-1.5 shadow-lg shadow-black/10 border-0"
                 >
-                  <HiTag className="w-4 h-4 text-violet-700" />
-                  <span>Procurement Opportunities</span>
+                  <HiReceiptTax className="w-4 h-4 text-violet-700" />
+                  <span>Invoice & Payment Tracking</span>
                 </Button>
               </Link>
 
