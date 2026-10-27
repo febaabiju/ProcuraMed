@@ -39,6 +39,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
     recorded_by_details = UserSerializer(source='recorded_by', read_only=True)
     total_amount_paid = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     outstanding_balance = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    invoice_document_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Invoice
@@ -49,10 +50,19 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'payment_status', 'payment_status_display', 'verification_remarks',
             'verified_by', 'verified_by_details', 'verified_at',
             'recorded_by', 'recorded_by_details',
-            'remarks', 'total_amount_paid', 'outstanding_balance', 'payments',
+            'remarks', 'invoice_document', 'invoice_document_url',
+            'total_amount_paid', 'outstanding_balance', 'payments',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'total_amount', 'status', 'payment_status',
-            'verified_by', 'verified_at', 'recorded_by', 'created_at', 'updated_at'
+            'verified_by', 'verified_at', 'recorded_by', 'created_at', 'updated_at',
+            'invoice_document_url'
         ]
+
+    def get_invoice_document_url(self, obj):
+        if not obj.invoice_document:
+            return None
+        request = self.context.get('request')
+        url = obj.invoice_document.url
+        return request.build_absolute_uri(url) if request else url

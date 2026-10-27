@@ -28,6 +28,7 @@ import VendorOpportunitiesPage from './pages/vendor/VendorOpportunitiesPage';
 import VendorQuotationsPage from './pages/vendor/VendorQuotationsPage';
 import VendorPurchaseOrdersPage from './pages/vendor/VendorPurchaseOrdersPage';
 import VendorDeliveriesPage from './pages/vendor/VendorDeliveriesPage';
+import VendorInvoicesPage from './pages/vendor/VendorInvoicesPage';
 import VendorChangePasswordPage from './pages/vendor/VendorChangePasswordPage';
 import VendorPlaceholderPage from './pages/vendor/VendorPlaceholderPage';
 import DepartmentStaffDashboardPage from './pages/staff/DepartmentStaffDashboardPage';
@@ -242,7 +243,11 @@ function App() {
           />
           <Route
             path="/purchase-officer/payments"
-            element={<Navigate to="/purchase-officer/invoices" replace />}
+            element={
+              <PurchaseOfficerProtectedRoute>
+                <PurchaseOfficerInvoicesPage />
+              </PurchaseOfficerProtectedRoute>
+            }
           />
           <Route
             path="/purchase-officer/notifications"
@@ -388,7 +393,7 @@ function App() {
             path="/vendor/invoices"
             element={
               <VendorProtectedRoute>
-                <VendorPlaceholderPage path="/vendor/invoices" />
+                <VendorInvoicesPage />
               </VendorProtectedRoute>
             }
           />

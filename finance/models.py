@@ -58,6 +58,9 @@ class Invoice(models.Model):
         related_name='recorded_invoices', verbose_name="Recorded By"
     )
     remarks = models.TextField(blank=True, null=True)
+    invoice_document = models.FileField(
+        upload_to='invoices/documents/', null=True, blank=True, verbose_name="Invoice Document"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

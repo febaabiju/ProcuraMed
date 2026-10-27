@@ -2,6 +2,7 @@ from decimal import Decimal
 from django.test import TestCase
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 from rest_framework import status
 
@@ -22,6 +23,7 @@ class InvoicePaymentTrackingTests(TestCase):
         self.role_po, _ = Role.objects.get_or_create(name='Purchase Officer')
         self.role_staff, _ = Role.objects.get_or_create(name='Department Staff')
         self.role_admin, _ = Role.objects.get_or_create(name='Admin')
+        self.role_vendor, _ = Role.objects.get_or_create(name='Vendor')
 
         # Department
         self.department, _ = Department.objects.get_or_create(
@@ -57,6 +59,15 @@ class InvoicePaymentTrackingTests(TestCase):
         )
         self.vendor_1.supplier_categories.add(self.category)
 
+        self.vendor_user_1 = User.objects.create_user(
+            username='vendor1_user',
+            email='vendor1@medtech.com',
+            password='Password123!',
+            role=self.role_vendor
+        )
+        self.vendor_1.user = self.vendor_user_1
+        self.vendor_1.save()
+
         self.vendor_2 = Vendor.objects.create(
             company_name='BioCare Global',
             vendor_code='VEND-BIO-02',
@@ -67,6 +78,15 @@ class InvoicePaymentTrackingTests(TestCase):
             is_active=True
         )
         self.vendor_2.supplier_categories.add(self.category)
+
+        self.vendor_user_2 = User.objects.create_user(
+            username='vendor2_user',
+            email='vendor2@biocare.com',
+            password='Password123!',
+            role=self.role_vendor
+        )
+        self.vendor_2.user = self.vendor_user_2
+        self.vendor_2.save()
 
         # Requisition
         self.requisition = Requisition.objects.create(
@@ -93,6 +113,23 @@ class InvoicePaymentTrackingTests(TestCase):
             quantity=10,
             unit_price=Decimal('5000.00'),
             total_price=Decimal('50000.00')
+        )
+
+        # Purchase Order for Vendor 2, total $15,000
+        self.po_2 = PurchaseOrder.objects.create(
+            requisition=self.requisition,
+            vendor=self.vendor_2,
+            created_by=self.purchase_officer,
+            total_amount=Decimal('15000.00'),
+            status=PurchaseOrder.StatusChoices.ISSUED,
+            delivery_status=PurchaseOrder.DeliveryStatusChoices.AWAITING_DELIVERY
+        )
+        self.po_item_2 = PurchaseOrderItem.objects.create(
+            purchase_order=self.po_2,
+            item_name='Diagnostic Ultrasound Probe',
+            quantity=3,
+            unit_price=Decimal('5000.00'),
+            total_price=Decimal('15000.00')
         )
 
     def test_record_invoice_success(self):
@@ -361,3 +398,165 @@ class InvoicePaymentTrackingTests(TestCase):
             'amount': '1000.00'
         }, format='json')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_vendor_submit_invoice_for_own_po_with_document(self):
+        # Vendor submits invoice for their own PO with document upload
+        self.client.force_authenticate(user=self.vendor_user_1)
+        invoice_file = SimpleUploadedFile(
+            "vendor_invoice_doc.pdf",
+            b"%PDF-1.4 sample vendor invoice content",
+            content_type="application/pdf"
+        )
+        response = self.client.post('/api/finance/invoices/', {
+            'purchase_order': self.po.id,
+            'invoice_number': 'INV-MED-2026-001',
+            'invoice_date': '2026-10-27',
+            'amount': '12500.00',
+            'tax_amount': '625.00',
+            'notes': 'Partial billing for delivery batch 1',
+            'invoice_document': invoice_file
+        }, format='multipart')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['invoice_number'], 'INV-MED-2026-001')
+        self.assertEqual(response.data['verification_status'], 'PENDING_VERIFICATION')
+        self.assertEqual(response.data['vendor'], self.vendor_1.id)
+        self.assertEqual(response.data['vendor_name'], self.vendor_1.company_name)
+        self.assertIsNotNone(response.data.get('invoice_document_url'))
+
+        # Check DB state
+        created_invoice = Invoice.objects.get(invoice_number='INV-MED-2026-001')
+        self.assertEqual(created_invoice.vendor, self.vendor_1)
+        self.assertEqual(created_invoice.purchase_order, self.po)
+        self.assertEqual(created_invoice.verification_status, Invoice.VerificationStatusChoices.PENDING_VERIFICATION)
+        self.assertTrue(bool(created_invoice.invoice_document))
+
+    def test_vendor_forbidden_from_submitting_invoice_for_another_vendor_po(self):
+        # Vendor 1 attempts to submit an invoice for Vendor 2's purchase order
+        self.client.force_authenticate(user=self.vendor_user_1)
+        response = self.client.post('/api/finance/invoices/', {
+            'purchase_order': self.po_2.id,  # PO belongs to Vendor 2
+            'invoice_number': 'INV-UNAUTHORIZED-01',
+            'invoice_date': '2026-10-27',
+            'amount': '5000.00',
+            'notes': 'Unauthorized attempt'
+        }, format='multipart')
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("not authorized to submit invoices for another vendor's purchase order", response.data['detail'])
+
+    def test_vendor_forbidden_from_verifying_invoice(self):
+        # Create invoice for vendor 1
+        invoice = Invoice.objects.create(
+            purchase_order=self.po,
+            vendor=self.vendor_1,
+            invoice_number='INV-TEST-VERIFY',
+            amount=Decimal('10000.00'),
+            total_amount=Decimal('10000.00'),
+            recorded_by=self.vendor_user_1,
+            verification_status=Invoice.VerificationStatusChoices.PENDING_VERIFICATION
+        )
+        self.client.force_authenticate(user=self.vendor_user_1)
+        response = self.client.post(f'/api/finance/invoices/{invoice.id}/verify/', {
+            'verification_status': 'VERIFIED',
+            'verification_remarks': 'Self-approval attempt'
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_vendor_forbidden_from_recording_payment(self):
+        # Create verified invoice
+        invoice = Invoice.objects.create(
+            purchase_order=self.po,
+            vendor=self.vendor_1,
+            invoice_number='INV-TEST-PAY',
+            amount=Decimal('10000.00'),
+            total_amount=Decimal('10000.00'),
+            recorded_by=self.vendor_user_1,
+            verification_status=Invoice.VerificationStatusChoices.VERIFIED
+        )
+        self.client.force_authenticate(user=self.vendor_user_1)
+        
+        # Test 1: Action on invoice endpoint
+        resp1 = self.client.post(f'/api/finance/invoices/{invoice.id}/record-payment/', {
+            'amount_paid': '5000.00',
+            'payment_mode': 'BANK_TRANSFER'
+        }, format='json')
+        self.assertEqual(resp1.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Test 2: Direct POST to payment endpoint
+        resp2 = self.client.post('/api/finance/payments/', {
+            'invoice': invoice.id,
+            'amount_paid': '5000.00',
+            'payment_mode': 'BANK_TRANSFER'
+        }, format='json')
+        self.assertEqual(resp2.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_vendor_invoice_list_is_strictly_scoped_to_own_vendor(self):
+        # Create Invoice 1 for Vendor 1
+        inv1 = Invoice.objects.create(
+            purchase_order=self.po,
+            vendor=self.vendor_1,
+            invoice_number='INV-VEND1-SCOPED',
+            amount=Decimal('5000.00'),
+            total_amount=Decimal('5000.00')
+        )
+        # Create Invoice 2 for Vendor 2
+        inv2 = Invoice.objects.create(
+            purchase_order=self.po_2,
+            vendor=self.vendor_2,
+            invoice_number='INV-VEND2-SCOPED',
+            amount=Decimal('7000.00'),
+            total_amount=Decimal('7000.00')
+        )
+
+        # Vendor 1 queries list
+        self.client.force_authenticate(user=self.vendor_user_1)
+        resp1 = self.client.get('/api/finance/invoices/')
+        self.assertEqual(resp1.status_code, status.HTTP_200_OK)
+        returned_ids_1 = [item['id'] for item in resp1.data.get('results', resp1.data)]
+        self.assertIn(inv1.id, returned_ids_1)
+        self.assertNotIn(inv2.id, returned_ids_1)
+
+        # Vendor 2 queries list
+        self.client.force_authenticate(user=self.vendor_user_2)
+        resp2 = self.client.get('/api/finance/invoices/')
+        self.assertEqual(resp2.status_code, status.HTTP_200_OK)
+        returned_ids_2 = [item['id'] for item in resp2.data.get('results', resp2.data)]
+        self.assertIn(inv2.id, returned_ids_2)
+        self.assertNotIn(inv1.id, returned_ids_2)
+
+        # Purchase Officer queries list and sees both
+        self.client.force_authenticate(user=self.purchase_officer)
+        resp_po = self.client.get('/api/finance/invoices/')
+        self.assertEqual(resp_po.status_code, status.HTTP_200_OK)
+        po_returned_ids = [item['id'] for item in resp_po.data.get('results', resp_po.data)]
+        self.assertIn(inv1.id, po_returned_ids)
+        self.assertIn(inv2.id, po_returned_ids)
+
+    def test_purchase_officer_reject_invoice_with_remarks(self):
+        # Create pending invoice
+        invoice = Invoice.objects.create(
+            purchase_order=self.po,
+            vendor=self.vendor_1,
+            invoice_number='INV-REJECT-TEST',
+            amount=Decimal('8000.00'),
+            total_amount=Decimal('8000.00'),
+            verification_status=Invoice.VerificationStatusChoices.PENDING_VERIFICATION
+        )
+
+        self.client.force_authenticate(user=self.purchase_officer)
+        response = self.client.post(f'/api/finance/invoices/{invoice.id}/verify/', {
+            'verification_status': 'REJECTED',
+            'verification_remarks': 'Tax invoice serial number does not match registered GSTIN'
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['verification_status'], 'REJECTED')
+        self.assertEqual(response.data['status'], 'REJECTED')
+
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.verification_status, Invoice.VerificationStatusChoices.REJECTED)
+        self.assertEqual(invoice.status, Invoice.StatusChoices.REJECTED)
+        self.assertEqual(invoice.verification_remarks, 'Tax invoice serial number does not match registered GSTIN')
+        self.assertEqual(invoice.verified_by, self.purchase_officer)
+

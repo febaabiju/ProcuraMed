@@ -1,31 +1,54 @@
 from decimal import Decimal
-from django.db.models import Sum
+from django.db.models import Sum, Q
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from accounts.models import AuditLog
 from procurement.models import PurchaseOrder
 from vendors.models import Vendor
 from .models import Invoice, Payment
 from .serializers import InvoiceSerializer, PaymentSerializer
-from .permissions import IsPurchaseOfficerOrFinanceOrAdmin
+from .permissions import IsInvoiceAuthorizedUser, IsPurchaseOfficerOrFinanceOrAdmin
 from .filters import InvoiceFilter, PaymentFilter
 
 
 class InvoiceViewSet(viewsets.ModelViewSet):
-    queryset = Invoice.objects.select_related(
-        'purchase_order', 'purchase_order__vendor', 'vendor', 'verified_by', 'recorded_by'
-    ).prefetch_related('payments').all()
     serializer_class = InvoiceSerializer
-    permission_classes = [IsAuthenticated, IsPurchaseOfficerOrFinanceOrAdmin]
+    permission_classes = [IsAuthenticated, IsInvoiceAuthorizedUser]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     filterset_class = InvoiceFilter
     search_fields = ['invoice_number', 'remarks', 'purchase_order__po_number', 'vendor__company_name']
     ordering_fields = ['invoice_date', 'total_amount', 'created_at']
 
+    def get_queryset(self):
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return Invoice.objects.none()
+
+        qs = Invoice.objects.select_related(
+            'purchase_order', 'purchase_order__vendor', 'vendor', 'verified_by', 'recorded_by'
+        ).prefetch_related('payments')
+
+        r_name = user.role.name.lower() if user.role else ''
+        is_vendor = 'vendor' in r_name or hasattr(user, 'vendor_profile')
+
+        if is_vendor:
+            vendor = getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+            if not vendor:
+                return Invoice.objects.none()
+            return qs.filter(vendor=vendor).order_by('-created_at')
+
+        return qs.order_by('-created_at')
+
     def create(self, request, *args, **kwargs):
+        user = request.user
+        r_name = user.role.name.lower() if user.role else ''
+        is_vendor = 'vendor' in r_name or hasattr(user, 'vendor_profile')
+
         po_id = request.data.get('purchase_order')
         if not po_id:
             return Response({'detail': 'Purchase order is required.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -35,9 +58,20 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         except PurchaseOrder.DoesNotExist:
             return Response({'detail': f'Purchase Order {po_id} does not exist.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        vendor = po.vendor
-        if not vendor:
-            return Response({'detail': 'Linked purchase order does not have an assigned vendor.'}, status=status.HTTP_400_BAD_REQUEST)
+        # Enforce vendor authorization: prevent vendors from accessing or submitting invoices for another vendor's PO
+        if is_vendor:
+            vendor = getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+            if not vendor:
+                return Response({'detail': 'Vendor profile not found for this user.'}, status=status.HTTP_403_FORBIDDEN)
+            if po.vendor_id != vendor.id:
+                return Response(
+                    {'detail': "You are not authorized to submit invoices for another vendor's purchase order."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        else:
+            vendor = po.vendor
+            if not vendor:
+                return Response({'detail': 'Linked purchase order does not have an assigned vendor.'}, status=status.HTTP_400_BAD_REQUEST)
 
         invoice_number = request.data.get('invoice_number', '').strip()
         if not invoice_number:
@@ -85,29 +119,35 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         invoice_date = request.data.get('invoice_date') or timezone.now().date()
         due_date = request.data.get('due_date') or None
         remarks = request.data.get('remarks', '')
+        invoice_document = request.FILES.get('invoice_document')
 
-        # Initial verification status
-        requested_ver_status = request.data.get('verification_status', Invoice.VerificationStatusChoices.PENDING_VERIFICATION)
-        verification_remarks = request.data.get('verification_remarks', '')
-
-        verified_by = None
-        verified_at = None
-        status_val = Invoice.StatusChoices.PENDING
-
-        if requested_ver_status == Invoice.VerificationStatusChoices.VERIFIED:
-            # Check delivery consistency
-            err_msg = self._check_delivery_consistency(po, total_amount)
-            if err_msg:
-                return Response({'detail': err_msg}, status=status.HTTP_400_BAD_REQUEST)
-            verified_by = request.user
-            verified_at = timezone.now()
-            status_val = Invoice.StatusChoices.VERIFIED
-        elif requested_ver_status == Invoice.VerificationStatusChoices.REJECTED:
-            verified_by = request.user
-            verified_at = timezone.now()
-            status_val = Invoice.StatusChoices.REJECTED
-        else:
+        # Initial verification status: vendors can ONLY submit as PENDING_VERIFICATION
+        if is_vendor:
             requested_ver_status = Invoice.VerificationStatusChoices.PENDING_VERIFICATION
+            verification_remarks = ''
+            verified_by = None
+            verified_at = None
+            status_val = Invoice.StatusChoices.PENDING
+        else:
+            requested_ver_status = request.data.get('verification_status', Invoice.VerificationStatusChoices.PENDING_VERIFICATION)
+            verification_remarks = request.data.get('verification_remarks', '')
+            verified_by = None
+            verified_at = None
+            status_val = Invoice.StatusChoices.PENDING
+
+            if requested_ver_status == Invoice.VerificationStatusChoices.VERIFIED:
+                err_msg = self._check_delivery_consistency(po, total_amount)
+                if err_msg:
+                    return Response({'detail': err_msg}, status=status.HTTP_400_BAD_REQUEST)
+                verified_by = request.user
+                verified_at = timezone.now()
+                status_val = Invoice.StatusChoices.VERIFIED
+            elif requested_ver_status == Invoice.VerificationStatusChoices.REJECTED:
+                verified_by = request.user
+                verified_at = timezone.now()
+                status_val = Invoice.StatusChoices.REJECTED
+            else:
+                requested_ver_status = Invoice.VerificationStatusChoices.PENDING_VERIFICATION
 
         invoice = Invoice.objects.create(
             invoice_number=invoice_number,
@@ -124,7 +164,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             verified_by=verified_by,
             verified_at=verified_at,
             recorded_by=request.user,
-            remarks=remarks
+            remarks=remarks,
+            invoice_document=invoice_document
         )
 
         AuditLog.objects.create(
@@ -170,6 +211,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='verify')
     def verify(self, request, pk=None):
+        user = request.user
+        r_name = user.role.name.lower() if user.role else ''
+        is_po_or_admin = user.is_superuser or user.is_staff or any(k in r_name for k in ['purchase', 'procurement officer', 'finance', 'accounts', 'admin'])
+        if not is_po_or_admin:
+            return Response({'detail': 'Only authorized Purchase Officers, Finance Officers, and Administrators can verify invoices.'}, status=status.HTTP_403_FORBIDDEN)
+
         invoice = self.get_object()
         new_status = request.data.get('verification_status')
         verification_remarks = request.data.get('verification_remarks', '')
@@ -181,14 +228,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             )
 
         if new_status == Invoice.VerificationStatusChoices.VERIFIED:
-            # Check essential details
             if not invoice.invoice_number or not invoice.invoice_date or invoice.amount <= Decimal('0.00') or not invoice.purchase_order:
                 return Response(
                     {'detail': 'Cannot verify invoice: Essential invoice details are missing or incomplete.'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Check delivery consistency
             err_msg = self._check_delivery_consistency(invoice.purchase_order, invoice.total_amount, exclude_invoice_id=invoice.id)
             if err_msg:
                 return Response({'detail': err_msg}, status=status.HTTP_400_BAD_REQUEST)
@@ -232,21 +277,50 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='record-payment')
     def record_payment(self, request, pk=None):
+        user = request.user
+        r_name = user.role.name.lower() if user.role else ''
+        is_po_or_admin = user.is_superuser or user.is_staff or any(k in r_name for k in ['purchase', 'procurement officer', 'finance', 'accounts', 'admin'])
+        if not is_po_or_admin:
+            return Response({'detail': 'Only authorized Purchase Officers, Finance Officers, and Administrators can record payments.'}, status=status.HTTP_403_FORBIDDEN)
+
         invoice = self.get_object()
         return process_record_payment(request.user, invoice, request.data)
 
 
 class PaymentViewSet(viewsets.ModelViewSet):
-    queryset = Payment.objects.select_related(
-        'invoice', 'invoice__purchase_order', 'invoice__vendor', 'processed_by'
-    ).all()
     serializer_class = PaymentSerializer
-    permission_classes = [IsAuthenticated, IsPurchaseOfficerOrFinanceOrAdmin]
+    permission_classes = [IsAuthenticated, IsInvoiceAuthorizedUser]
     filterset_class = PaymentFilter
     search_fields = ['payment_number', 'transaction_reference', 'notes', 'invoice__invoice_number']
     ordering_fields = ['payment_date', 'amount_paid', 'created_at']
 
+    def get_queryset(self):
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return Payment.objects.none()
+
+        qs = Payment.objects.select_related(
+            'invoice', 'invoice__purchase_order', 'invoice__vendor', 'processed_by'
+        )
+
+        r_name = user.role.name.lower() if user.role else ''
+        is_vendor = 'vendor' in r_name or hasattr(user, 'vendor_profile')
+
+        if is_vendor:
+            vendor = getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+            if not vendor:
+                return Payment.objects.none()
+            return qs.filter(invoice__vendor=vendor).order_by('-created_at')
+
+        return qs.order_by('-created_at')
+
     def create(self, request, *args, **kwargs):
+        user = request.user
+        r_name = user.role.name.lower() if user.role else ''
+        is_po_or_admin = user.is_superuser or user.is_staff or any(k in r_name for k in ['purchase', 'procurement officer', 'finance', 'accounts', 'admin'])
+        if not is_po_or_admin:
+            return Response({'detail': 'Vendors cannot record payments. Only authorized Purchase Officers or Finance Officers can record payments.'}, status=status.HTTP_403_FORBIDDEN)
+
         invoice_id = request.data.get('invoice')
         if not invoice_id:
             return Response({'detail': 'Invoice ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -260,7 +334,6 @@ class PaymentViewSet(viewsets.ModelViewSet):
 
 
 def process_record_payment(user, invoice, data):
-    # Only verified invoices can be marked as paid
     if invoice.verification_status != Invoice.VerificationStatusChoices.VERIFIED:
         return Response(
             {
@@ -302,7 +375,6 @@ def process_record_payment(user, invoice, data):
         notes=notes
     )
 
-    # Update invoice and PO completion
     invoice.update_payment_status()
     invoice.purchase_order.check_and_update_procurement_completion()
 
@@ -315,3 +387,4 @@ def process_record_payment(user, invoice, data):
 
     serializer = PaymentSerializer(payment)
     return Response(serializer.data, status=status.HTTP_201_CREATED)
+
