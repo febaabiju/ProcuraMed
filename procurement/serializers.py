@@ -133,6 +133,12 @@ class RequisitionSerializer(serializers.ModelSerializer):
     secure_document_url = serializers.SerializerMethodField()
     technical_evaluation_advisory = serializers.SerializerMethodField()
     latest_rfq = serializers.SerializerMethodField()
+    selected_vendor_details = serializers.SerializerMethodField()
+    selected_quotation_details = serializers.SerializerMethodField()
+    vendor_selected_by_name = serializers.SerializerMethodField()
+    has_purchase_order = serializers.SerializerMethodField()
+    purchase_order_id = serializers.SerializerMethodField()
+    purchase_order_number = serializers.SerializerMethodField()
 
     class Meta:
         model = Requisition
@@ -156,6 +162,11 @@ class RequisitionSerializer(serializers.ModelSerializer):
             'priority', 'estimated_budget',
             'status', 'justification', 'supporting_document', 'secure_document_url',
             'technical_evaluation_advisory', 'latest_rfq',
+            'selected_vendor', 'selected_vendor_details',
+            'selected_quotation', 'selected_quotation_details',
+            'vendor_selected_by', 'vendor_selected_by_name',
+            'vendor_selected_at', 'vendor_selection_remarks',
+            'has_purchase_order', 'purchase_order_id', 'purchase_order_number',
             'items', 'approvals', 'review_comments', 'reviewed_by', 'reviewed_by_details',
             'reviewed_at', 'submitted_at', 'required_date', 'created_at', 'updated_at'
         ]
@@ -177,7 +188,9 @@ class RequisitionSerializer(serializers.ModelSerializer):
             'requires_technical_evaluation',
             'technical_specialization', 'review_comments', 'reviewed_by', 'reviewed_at',
             'submitted_at', 'required_date', 'secure_document_url', 'technical_evaluation_advisory',
-            'latest_rfq', 'created_at', 'updated_at'
+            'latest_rfq', 'selected_vendor_details', 'selected_quotation_details',
+            'vendor_selected_by_name', 'has_purchase_order', 'purchase_order_id',
+            'purchase_order_number', 'created_at', 'updated_at'
         ]
 
     def get_assigned_purchase_officer_name(self, obj):
@@ -336,6 +349,76 @@ class RequisitionSerializer(serializers.ModelSerializer):
             'vendor_tracking': tracking,
             'created_at': rfq.created_at.isoformat() if rfq.created_at else None,
         }
+
+    def get_selected_vendor_details(self, obj):
+        if not obj.selected_vendor:
+            return None
+        v = obj.selected_vendor
+        return {
+            'id': v.id,
+            'vendor_code': v.vendor_code or f"VEN-2026-{v.id:05d}",
+            'company_name': v.company_name,
+            'contact_person': v.contact_person,
+            'email': v.email,
+            'phone': v.phone,
+            'address': getattr(v, 'address', '') or '',
+            'city': getattr(v, 'city', '') or '',
+            'tax_id': getattr(v, 'tax_id', '') or getattr(v, 'gst_number', '') or '',
+            'performance_rating': str(v.performance_rating) if getattr(v, 'performance_rating', None) else None,
+        }
+
+    def get_selected_quotation_details(self, obj):
+        if not obj.selected_quotation:
+            return None
+        q = obj.selected_quotation
+        request = self.context.get('request')
+        doc_url = None
+        if q.quotation_document:
+            rel_url = f"/api/procurement/quotations/{q.id}/document/"
+            doc_url = request.build_absolute_uri(rel_url) if request else rel_url
+        return {
+            'id': q.id,
+            'quotation_number': q.quotation_number,
+            'total_amount': str(q.total_amount),
+            'tax_percentage': str(q.tax_percentage) if q.tax_percentage else '0.00',
+            'tax_amount': str(q.tax_amount) if q.tax_amount else '0.00',
+            'shipping_charges': str(q.shipping_charges) if q.shipping_charges else '0.00',
+            'lead_time_days': q.lead_time_days,
+            'submission_date': q.submission_date.isoformat() if q.submission_date else None,
+            'valid_until': q.valid_until.isoformat() if q.valid_until else None,
+            'remarks': q.remarks,
+            'evaluation_remarks': q.evaluation_remarks,
+            'status': q.status,
+            'status_display': q.get_status_display(),
+            'quotation_document_url': doc_url,
+            'items': [
+                {
+                    'id': it.id,
+                    'item_name': it.item_name,
+                    'specification': it.specification,
+                    'quantity': it.quantity,
+                    'unit_price': str(it.unit_price),
+                    'total_price': str(it.total_price),
+                } for it in q.items.all()
+            ]
+        }
+
+    def get_vendor_selected_by_name(self, obj):
+        if obj.vendor_selected_by:
+            name = obj.vendor_selected_by.get_full_name()
+            return name.strip() if name and name.strip() else obj.vendor_selected_by.username
+        return None
+
+    def get_has_purchase_order(self, obj):
+        return obj.purchase_orders.exists()
+
+    def get_purchase_order_id(self, obj):
+        po = obj.purchase_orders.first()
+        return po.id if po else None
+
+    def get_purchase_order_number(self, obj):
+        po = obj.purchase_orders.first()
+        return po.po_number if po else None
 
     def validate_supporting_document(self, value):
         if not value:
@@ -888,6 +971,14 @@ class PurchaseOrderItemSerializer(serializers.ModelSerializer):
 
 
 class PurchaseOrderSerializer(serializers.ModelSerializer):
+    requisition = serializers.PrimaryKeyRelatedField(
+        queryset=Requisition.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    requisition_details = serializers.SerializerMethodField()
+    quotation_details = serializers.SerializerMethodField()
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
     vendor = serializers.PrimaryKeyRelatedField(
         queryset=Vendor.objects.filter(status=Vendor.StatusChoices.ACTIVE, is_active=True)
     )
@@ -898,9 +989,71 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
     class Meta:
         model = PurchaseOrder
         fields = [
-            'id', 'po_number', 'quotation', 'vendor', 'vendor_details',
+            'id', 'po_number', 'requisition', 'requisition_details', 'quotation',
+            'quotation_details', 'vendor', 'vendor_details',
             'created_by', 'created_by_details', 'total_amount', 'order_date',
-            'expected_delivery_date', 'terms_and_conditions', 'status',
+            'expected_delivery_date', 'terms_and_conditions', 'status', 'status_display',
             'items', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'po_number', 'created_by', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'po_number', 'requisition_details', 'quotation_details',
+            'status_display', 'created_by', 'created_at', 'updated_at'
+        ]
+
+    def get_requisition_details(self, obj):
+        if not obj.requisition:
+            return None
+        req = obj.requisition
+        first_item = req.items.first()
+        return {
+            'id': req.id,
+            'req_number': req.req_number,
+            'requisition_number': req.req_number,
+            'title': req.title,
+            'category': req.category,
+            'priority': req.priority,
+            'department_name': req.department.name if req.department else 'Hospital Department',
+            'department_code': req.department.code if req.department else 'DEPT',
+            'justification': req.justification,
+            'estimated_budget': str(req.estimated_budget) if req.estimated_budget else '0.00',
+            'status': req.status,
+            'status_display': req.get_status_display(),
+            'vendor_selection_remarks': req.vendor_selection_remarks,
+            'vendor_selected_by_name': (
+                req.vendor_selected_by.get_full_name() or req.vendor_selected_by.username
+            ) if req.vendor_selected_by else None,
+            'vendor_selected_at': req.vendor_selected_at.isoformat() if req.vendor_selected_at else None,
+            'item_name': first_item.item_name if first_item else req.title,
+            'item_specifications': first_item.specifications if first_item else (req.justification or ''),
+            'item_quantity': first_item.quantity if first_item else 1,
+            'items': [
+                {
+                    'id': it.id,
+                    'item_name': it.item_name,
+                    'specifications': it.specifications,
+                    'quantity': it.quantity,
+                    'estimated_unit_price': str(it.estimated_unit_price),
+                    'total_price': str(it.total_price),
+                } for it in req.items.all()
+            ]
+        }
+
+    def get_quotation_details(self, obj):
+        if not obj.quotation:
+            return None
+        q = obj.quotation
+        request = self.context.get('request')
+        doc_url = None
+        if q.quotation_document:
+            rel_url = f"/api/procurement/quotations/{q.id}/document/"
+            doc_url = request.build_absolute_uri(rel_url) if request else rel_url
+        return {
+            'id': q.id,
+            'quotation_number': q.quotation_number,
+            'total_amount': str(q.total_amount),
+            'lead_time_days': q.lead_time_days,
+            'status': q.status,
+            'status_display': q.get_status_display(),
+            'quotation_document_url': doc_url,
+        }
+

@@ -21,8 +21,8 @@ import {
   HiCheckCircle,
   HiEye,
   HiAdjustments,
-  HiViewGrid,
-  HiViewList
+  HiCalendar,
+  HiShieldCheck
 } from 'react-icons/hi';
 
 const ProcurementCommitteeQuotationsPage = () => {
@@ -83,12 +83,12 @@ const ProcurementCommitteeQuotationsPage = () => {
   const metrics = useMemo(() => {
     const total = quotations.length;
     const underReview = quotations.filter(q => q.status === 'UNDER_REVIEW').length;
-    const recommended = quotations.filter(q => q.status === 'RECOMMENDED' || q.is_recommended).length;
+    const selected = quotations.filter(q => q.status === 'SELECTED' || q.status === 'ACCEPTED').length;
     const distinctReqs = new Set(
       quotations.map(q => q.requisition_details?.req_number || q.quotation_request_details?.rfq_number).filter(Boolean)
     ).size;
 
-    return { total, underReview, recommended, distinctReqs };
+    return { total, underReview, selected, distinctReqs };
   }, [quotations]);
 
   // Filtered quotations
@@ -96,7 +96,9 @@ const ProcurementCommitteeQuotationsPage = () => {
     return quotations.filter(q => {
       // Status filter
       if (selectedStatus !== 'ALL') {
-        if (selectedStatus === 'RECOMMENDED') {
+        if (selectedStatus === 'SELECTED') {
+          if (q.status !== 'SELECTED' && q.status !== 'ACCEPTED') return false;
+        } else if (selectedStatus === 'RECOMMENDED') {
           if (q.status !== 'RECOMMENDED' && !q.is_recommended) return false;
         } else if (q.status !== selectedStatus) {
           return false;
@@ -127,7 +129,7 @@ const ProcurementCommitteeQuotationsPage = () => {
     });
   }, [quotations, selectedStatus, searchQuery]);
 
-  // Group quotations by RFQ / Purchase Request for structured comparison
+  // Group quotations strictly by Purchase Request / RFQ
   const groupedQuotations = useMemo(() => {
     const groups = {};
     filteredQuotations.forEach(quote => {
@@ -163,8 +165,8 @@ const ProcurementCommitteeQuotationsPage = () => {
 
   return (
     <ProcurementCommitteeLayout
-      title="Received Vendor Quotations"
-      subtitle="Review, analyze, and recommend vendor bids for purchase requests assigned to you."
+      title="Quotation Review & Vendor Selection"
+      subtitle="Review vendor quotations, compare proposals side-by-side, and confirm vendor selection for assigned purchase requests."
       onRefresh={fetchQuotations}
     >
       <div className="space-y-6 max-w-7xl mx-auto">
@@ -192,7 +194,7 @@ const ProcurementCommitteeQuotationsPage = () => {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-violet-500/30 text-violet-200 border border-violet-400/30 flex items-center gap-1.5">
                   <HiDocumentText className="w-3.5 h-3.5" />
-                  Committee Bid Review
+                  Procurement Committee Review
                 </span>
                 <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 flex items-center gap-1.5">
                   <HiBadgeCheck className="w-3.5 h-3.5" />
@@ -200,11 +202,11 @@ const ProcurementCommitteeQuotationsPage = () => {
                 </span>
               </div>
               <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
-                Vendor Quotations Evaluation
+                Quotation Review &amp; Vendor Selection
               </h2>
               <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
-                Examine technical compliance, commercial offers, delivery lead times, and official vendor documents.
-                Compare bids side-by-side and submit recommendations for committee approval without automated contract awards.
+                Examine received vendor quotations, compare pricing, specifications, and delivery timelines, review signed PDFs,
+                and record justified vendor selections to seamlessly transfer approved bids to the Purchase Officer.
               </p>
             </div>
 
@@ -217,7 +219,7 @@ const ProcurementCommitteeQuotationsPage = () => {
                 className="bg-white/10 hover:bg-white/20 text-white border-white/20 text-xs font-semibold gap-2 backdrop-blur-xs"
               >
                 <HiRefresh className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                <span>Refresh Quotations</span>
+                <span>Refresh Bids</span>
               </Button>
             </div>
           </div>
@@ -228,7 +230,7 @@ const ProcurementCommitteeQuotationsPage = () => {
           <div className="p-5 bg-white rounded-2xl border border-violet-100 shadow-xs flex flex-col justify-between space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                Total Quotations
+                Total Received Bids
               </span>
               <div className="w-10 h-10 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center font-bold">
                 <HiDocumentText className="w-5 h-5" />
@@ -237,7 +239,7 @@ const ProcurementCommitteeQuotationsPage = () => {
             <div>
               <h3 className="text-3xl font-black text-slate-900">{metrics.total}</h3>
               <p className="text-xs text-violet-600 font-semibold mt-0.5">
-                Received across assigned PRs
+                Submitted by invited vendors
               </p>
             </div>
           </div>
@@ -262,16 +264,16 @@ const ProcurementCommitteeQuotationsPage = () => {
           <div className="p-5 bg-white rounded-2xl border border-violet-100 shadow-xs flex flex-col justify-between space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                Recommended Bids
+                Vendor Selections Confirmed
               </span>
-              <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
+              <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
                 <HiBadgeCheck className="w-5 h-5" />
               </div>
             </div>
             <div>
-              <h3 className="text-3xl font-black text-purple-700">{metrics.recommended}</h3>
-              <p className="text-xs text-purple-700 font-semibold mt-0.5">
-                Endorsed for committee sanction
+              <h3 className="text-3xl font-black text-emerald-600">{metrics.selected}</h3>
+              <p className="text-xs text-emerald-700 font-semibold mt-0.5">
+                Selected &amp; sent to Purchase Officer
               </p>
             </div>
           </div>
@@ -279,24 +281,23 @@ const ProcurementCommitteeQuotationsPage = () => {
           <div className="p-5 bg-white rounded-2xl border border-violet-100 shadow-xs flex flex-col justify-between space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                Covered Requests
+                Purchase Requests Covered
               </span>
-              <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+              <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
                 <HiClipboardList className="w-5 h-5" />
               </div>
             </div>
             <div>
               <h3 className="text-3xl font-black text-slate-800">{metrics.distinctReqs}</h3>
-              <p className="text-xs text-emerald-700 font-semibold mt-0.5">
-                Assigned PRs with quotes
+              <p className="text-xs text-purple-700 font-semibold mt-0.5">
+                Requests with active bids
               </p>
             </div>
           </div>
         </div>
 
-        {/* 3. Search and Filter Bar */}
-        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-violet-100 shadow-xs flex flex-col md:flex-row items-center justify-between gap-4">
-          {/* Search Input */}
+        {/* 3. Search & Filters Bar */}
+        <div className="p-4 bg-white rounded-2xl border border-violet-100 shadow-xs flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="relative w-full md:w-96">
             <HiSearch className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
@@ -322,9 +323,8 @@ const ProcurementCommitteeQuotationsPage = () => {
               { id: 'ALL', label: 'All Quotations' },
               { id: 'SUBMITTED', label: 'Received' },
               { id: 'UNDER_REVIEW', label: 'Under Review' },
-              { id: 'RECOMMENDED', label: 'Recommended' },
-              { id: 'ACCEPTED', label: 'Accepted' },
-              { id: 'REJECTED', label: 'Rejected' }
+              { id: 'SELECTED', label: 'Vendor Selected' },
+              { id: 'NOT_SELECTED', label: 'Not Selected' }
             ].map(tab => (
               <button
                 key={tab.id}
@@ -341,7 +341,7 @@ const ProcurementCommitteeQuotationsPage = () => {
           </div>
         </div>
 
-        {/* 4. Quotations Display (Grouped by RFQ / PR) */}
+        {/* 4. Quotations Display (Grouped Strictly by Purchase Request) */}
         {loading ? (
           <div className="p-16 text-center text-slate-400 text-xs font-semibold flex flex-col items-center gap-3 bg-white rounded-3xl border border-violet-100">
             <HiRefresh className="w-8 h-8 animate-spin text-violet-600" />
@@ -356,7 +356,7 @@ const ProcurementCommitteeQuotationsPage = () => {
             <p className="text-xs text-slate-500 max-w-md mx-auto">
               {searchQuery || selectedStatus !== 'ALL'
                 ? 'No vendor quotations match your current search and filter criteria.'
-                : 'There are currently no vendor quotations submitted for the purchase requests assigned to you.'}
+                : 'There are currently no vendor quotations awaiting review for the purchase requests assigned to you.'}
             </p>
             {(searchQuery || selectedStatus !== 'ALL') && (
               <Button
@@ -376,87 +376,108 @@ const ProcurementCommitteeQuotationsPage = () => {
           <div className="space-y-8">
             {groupedQuotations.map((group) => {
               const req = group.reqDetails;
+              const hasVendorSelected = group.quotations.some(q => q.status === 'SELECTED' || q.status === 'ACCEPTED');
+              const selectedQuote = group.quotations.find(q => q.status === 'SELECTED' || q.status === 'ACCEPTED');
+
               return (
                 <div
                   key={group.rfqId || group.rfqNumber}
                   className="bg-white rounded-3xl border border-violet-100 shadow-sm overflow-hidden"
                 >
                   {/* RFQ / Purchase Request Section Header */}
-                  <div className="px-6 py-4 bg-gradient-to-r from-violet-50/90 via-purple-50/40 to-white border-b border-violet-100/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div className="space-y-1">
+                  <div className="px-6 py-5 bg-gradient-to-r from-violet-50/90 via-purple-50/40 to-white border-b border-violet-100/80 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                    <div className="space-y-1.5 max-w-3xl">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="px-2.5 py-0.5 rounded-lg text-xs font-mono font-bold bg-violet-600 text-white">
+                        {req.id && (
+                          <span className="px-2.5 py-0.5 rounded-lg text-xs font-mono font-bold bg-slate-900 text-white">
+                            PR ID: #{req.id}
+                          </span>
+                        )}
+                        {req.req_number && (
+                          <span className="px-2.5 py-0.5 rounded-lg text-xs font-mono font-bold bg-violet-100 text-violet-800 border border-violet-200">
+                            Ref: {req.req_number}
+                          </span>
+                        )}
+                        <span className="px-2.5 py-0.5 rounded-lg text-xs font-mono font-semibold bg-white border border-slate-200 text-slate-700">
                           RFQ: {group.rfqNumber}
                         </span>
-                        {req.req_number && (
-                          <span className="px-2.5 py-0.5 rounded-lg text-xs font-mono font-semibold bg-white border border-violet-200 text-violet-800">
-                            PR: {req.req_number}
-                          </span>
-                        )}
-                        {req.category && (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600">
-                            <HiTag className="w-3.5 h-3.5 text-violet-500" />
-                            {req.category}
-                          </span>
-                        )}
                         {req.department_name && (
-                          <span className="text-xs text-slate-500 font-medium">
-                            • {req.department_name}
+                          <span className="text-xs text-slate-600 font-bold">
+                            Dept: {req.department_name}
+                          </span>
+                        )}
+                        {hasVendorSelected ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                            <HiCheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                            Vendor Selected: {selectedQuote?.vendor_details?.company_name || 'Confirmed'}
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-800 border border-purple-200 flex items-center gap-1">
+                            <HiClock className="w-3.5 h-3.5 text-purple-600" />
+                            Awaiting Committee Selection
                           </span>
                         )}
                       </div>
 
-                      <h3 className="text-base font-extrabold text-slate-900 tracking-tight">
+                      <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
                         {req.title || group.rfqTitle}
                       </h3>
 
-                      <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500 pt-0.5">
-                        {req.estimated_budget && (
-                          <span>
-                            Est. Budget: <strong className="text-slate-800">{formatCurrency(req.estimated_budget)}</strong>
+                      {/* Items, Specs, Quantity, and Budget details */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 pt-1 text-xs text-slate-600">
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Requested Items</span>
+                          <span className="font-semibold text-slate-800">
+                            {req.item_name || req.title} (Qty: {req.quantity || 1} units)
                           </span>
-                        )}
-                        {req.item_name && (
-                          <span>
-                            Item: <strong className="text-slate-800">{req.item_name}</strong> (Qty: {req.quantity || 1})
+                        </div>
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Specifications</span>
+                          <span className="text-slate-600 truncate block max-w-xs">
+                            {req.specifications || 'Hospital standard specifications'}
                           </span>
-                        )}
-                        <span className="text-violet-700 font-bold">
-                          {group.quotations.length} Quotation{group.quotations.length === 1 ? '' : 's'} Received
-                        </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Estimated Budget</span>
+                          <span className="font-mono font-bold text-slate-900">
+                            {formatCurrency(req.estimated_budget)}
+                          </span>
+                        </div>
                       </div>
                     </div>
 
-                    {/* Compare Bids Button for this RFQ */}
+                    {/* Compare & Select Vendor Action */}
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <Button
                         variant="primary"
                         size="sm"
                         onClick={() => handleOpenComparison(group.rfqId, req.id)}
-                        className="bg-violet-700 hover:bg-violet-800 text-white font-bold text-xs gap-1.5 shadow-xs"
+                        className="bg-violet-700 hover:bg-violet-800 text-white font-bold text-xs gap-1.5 shadow-sm py-2 px-4"
                       >
                         <HiAdjustments className="w-4 h-4" />
-                        <span>Compare Bids ({group.quotations.length})</span>
+                        <span>Compare &amp; Select Vendor ({group.quotations.length})</span>
                       </Button>
                     </div>
                   </div>
 
-                  {/* Individual Quotation Cards inside this Group */}
+                  {/* Individual Quotation Cards strictly for this Purchase Request */}
                   <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                     {group.quotations.map((quote) => {
                       const vendor = quote.vendor_details || quote.vendor || {};
-                      const isRecommended = quote.is_recommended || quote.status === 'RECOMMENDED';
+                      const isSelected = quote.status === 'SELECTED' || quote.status === 'ACCEPTED';
+                      const isNotSelected = quote.status === 'NOT_SELECTED';
+                      const isUnderReview = quote.status === 'UNDER_REVIEW';
 
                       return (
                         <div
                           key={quote.id}
                           className={`rounded-2xl border transition-all flex flex-col justify-between overflow-hidden shadow-xs hover:shadow-md ${
-                            isRecommended
-                              ? 'border-purple-300 bg-purple-50/20 ring-2 ring-purple-400/40'
-                              : quote.status === 'ACCEPTED'
-                              ? 'border-emerald-200 bg-emerald-50/10'
-                              : quote.status === 'REJECTED'
-                              ? 'border-rose-200 bg-rose-50/10 opacity-80'
+                            isSelected
+                              ? 'border-emerald-300 bg-emerald-50/20 ring-2 ring-emerald-400/40'
+                              : isNotSelected
+                              ? 'border-slate-200 bg-slate-50/50 opacity-80'
+                              : isUnderReview
+                              ? 'border-blue-200 bg-blue-50/10'
                               : 'border-slate-200 bg-white'
                           }`}
                         >
@@ -482,23 +503,21 @@ const ProcurementCommitteeQuotationsPage = () => {
 
                             <div className="flex flex-wrap items-center gap-1.5 pt-1">
                               <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                                quote.status === 'RECOMMENDED'
-                                  ? 'bg-purple-100 text-purple-800 border-purple-200'
-                                  : quote.status === 'ACCEPTED'
+                                isSelected
                                   ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                                  : quote.status === 'UNDER_REVIEW'
+                                  : isNotSelected
+                                  ? 'bg-slate-100 text-slate-600 border-slate-200'
+                                  : isUnderReview
                                   ? 'bg-blue-100 text-blue-800 border-blue-200'
-                                  : quote.status === 'REJECTED'
-                                  ? 'bg-rose-100 text-rose-800 border-rose-200'
                                   : 'bg-amber-100 text-amber-800 border-amber-200'
                               }`}>
                                 {quote.status_display || quote.status}
                               </span>
 
-                              {isRecommended && (
-                                <span className="px-2 py-0.5 rounded-full bg-purple-700 text-white text-[10px] font-black flex items-center gap-1">
-                                  <HiBadgeCheck className="w-3 h-3" />
-                                  Recommended Bid
+                              {isSelected && (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-700 text-white text-[10px] font-black flex items-center gap-1 shadow-xs">
+                                  <HiCheckCircle className="w-3 h-3" />
+                                  Selected Winner
                                 </span>
                               )}
                             </div>
@@ -509,51 +528,49 @@ const ProcurementCommitteeQuotationsPage = () => {
                             {/* Total Price */}
                             <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between">
                               <div>
-                                <span className="text-[10px] font-bold text-slate-400 uppercase block">Total Quoted</span>
+                                <span className="text-[10px] font-bold text-slate-400 uppercase block">Quoted Amount</span>
                                 <span className="text-lg font-black text-slate-900 font-mono">
                                   {formatCurrency(quote.total_amount)}
                                 </span>
                               </div>
                               <div className="text-right text-[10px] text-slate-500 space-y-0.5">
-                                <div>Subtotal: {formatCurrency(quote.subtotal)}</div>
-                                <div>Tax: {formatCurrency(quote.tax_amount)} ({quote.tax_percentage || 0}%)</div>
+                                <div>Lead: {quote.lead_time_days ? `${quote.lead_time_days} Days` : 'N/A'}</div>
+                                <div>Tax: {quote.tax_percentage ? `${quote.tax_percentage}%` : 'Included'}</div>
                               </div>
                             </div>
 
-                            {/* Delivery & Validity Grid */}
+                            {/* Submission Date & Lead Time */}
                             <div className="grid grid-cols-2 gap-2 text-[11px]">
+                              <div className="p-2 rounded-xl bg-slate-50 border border-slate-100">
+                                <span className="text-[9px] font-bold text-slate-400 uppercase block">Submission Date</span>
+                                <span className="font-bold text-slate-800 flex items-center gap-1 mt-0.5 truncate">
+                                  <HiCalendar className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                                  {formatDate(quote.submission_date || quote.created_at)}
+                                </span>
+                              </div>
                               <div className="p-2 rounded-xl bg-slate-50 border border-slate-100">
                                 <span className="text-[9px] font-bold text-slate-400 uppercase block">Delivery Lead Time</span>
                                 <span className="font-bold text-slate-800 flex items-center gap-1 mt-0.5">
-                                  <HiTruck className="w-3 h-3 text-slate-400" />
-                                  {quote.lead_time_days ? `${quote.lead_time_days} Days` : 'N/A'}
-                                </span>
-                              </div>
-                              <div className="p-2 rounded-xl bg-slate-50 border border-slate-100">
-                                <span className="text-[9px] font-bold text-slate-400 uppercase block">Validity Date</span>
-                                <span className="font-bold text-slate-800 flex items-center gap-1 mt-0.5">
-                                  <HiClock className="w-3 h-3 text-slate-400" />
-                                  {formatDate(quote.valid_until)}
+                                  <HiTruck className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                                  {quote.lead_time_days ? `${quote.lead_time_days} Days` : 'Not specified'}
                                 </span>
                               </div>
                             </div>
 
-                            {/* Remarks preview if present */}
-                            {quote.remarks && (
-                              <p className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-xl border border-slate-100 line-clamp-2 italic">
-                                "{quote.remarks}"
-                              </p>
-                            )}
+                            {/* Vendor Contact details */}
+                            <div className="p-2 rounded-xl bg-slate-50 border border-slate-100 text-[11px] text-slate-600 space-y-0.5">
+                              {vendor.contact_person && (
+                                <div className="truncate">Contact: <strong className="text-slate-800">{vendor.contact_person}</strong></div>
+                              )}
+                              {vendor.email && (
+                                <div className="truncate">Email: {vendor.email}</div>
+                              )}
+                              {vendor.phone && (
+                                <div>Phone: {vendor.phone}</div>
+                              )}
+                            </div>
 
-                            {/* Evaluation Remarks preview */}
-                            {quote.evaluation_remarks && (
-                              <div className="p-2.5 rounded-xl bg-purple-50 border border-purple-100 text-[11px] space-y-0.5">
-                                <span className="text-[9px] font-bold text-purple-700 uppercase block">Committee Remarks</span>
-                                <p className="text-purple-900 font-medium line-clamp-2">{quote.evaluation_remarks}</p>
-                              </div>
-                            )}
-
-                            {/* Signed Quotation PDF Button */}
+                            {/* Signed PDF Button */}
                             {quote.quotation_document_url ? (
                               <button
                                 type="button"
@@ -561,26 +578,35 @@ const ProcurementCommitteeQuotationsPage = () => {
                                 className="w-full py-2 px-3 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-700 font-bold text-xs border border-violet-200 flex items-center justify-center gap-1.5 transition cursor-pointer"
                               >
                                 <HiDocumentText className="w-4 h-4" />
-                                <span>View Attached PDF</span>
-                                <HiExternalLink className="w-3 h-3" />
+                                <span>Open Signed Quotation PDF</span>
+                                <HiExternalLink className="w-3.5 h-3.5" />
                               </button>
                             ) : (
-                              <div className="text-[11px] text-slate-400 italic text-center py-1">
-                                No PDF document attached
-                              </div>
+                              <span className="text-[11px] text-slate-400 italic block text-center py-1">
+                                No signed PDF attached
+                              </span>
                             )}
                           </div>
 
-                          {/* Card Footer: Action buttons */}
+                          {/* Card Footer: Compare & Evaluate */}
                           <div className="p-4 bg-slate-50/80 border-t border-slate-100 flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleOpenEvaluation(quote)}
+                              className="w-1/2 text-xs font-semibold gap-1"
+                            >
+                              <HiEye className="w-3.5 h-3.5" />
+                              <span>Evaluate</span>
+                            </Button>
                             <Button
                               variant="primary"
                               size="sm"
-                              onClick={() => handleOpenEvaluation(quote)}
-                              className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs gap-1"
+                              onClick={() => handleOpenComparison(group.rfqId, req.id)}
+                              className="w-1/2 bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs gap-1"
                             >
-                              <HiEye className="w-3.5 h-3.5" />
-                              <span>Evaluate &amp; Remarks</span>
+                              <HiCheckCircle className="w-3.5 h-3.5" />
+                              <span>Select Vendor</span>
                             </Button>
                           </div>
                         </div>
@@ -599,7 +625,7 @@ const ProcurementCommitteeQuotationsPage = () => {
           onClose={() => setComparisonModalData({ isOpen: false, rfqId: null, requisitionId: null })}
           rfqId={comparisonModalData.rfqId}
           requisitionId={comparisonModalData.requisitionId}
-          onRecommendationSubmitted={fetchQuotations}
+          onVendorSelected={fetchQuotations}
         />
 
         <QuotationEvaluationModal

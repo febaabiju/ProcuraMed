@@ -280,6 +280,10 @@ const PurchaseOfficerDashboardPage = () => {
       case 'COMPLETED':
       case 'ACCEPTED':
         return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+      case 'VENDOR_SELECTED':
+        return 'bg-emerald-100 text-emerald-800 border-emerald-300 font-bold';
+      case 'PO_CREATED':
+        return 'bg-sky-50 text-sky-800 border-sky-300 font-bold';
       case 'SUBMITTED':
         return 'bg-blue-50 text-blue-700 border-blue-200';
       case 'PENDING_TECHNICAL_EVALUATION':
@@ -312,6 +316,8 @@ const PurchaseOfficerDashboardPage = () => {
       case 'PENDING_COMMITTEE_REVIEW': return 'Pending Committee Review';
       case 'PENDING_APPROVAL': return 'Pending Approval';
       case 'UNDER_REVIEW': return 'Under Review';
+      case 'VENDOR_SELECTED': return 'Vendor Selected (Awaiting PO)';
+      case 'PO_CREATED': return 'PO Created';
       case 'RETURNED': return 'Returned for Correction';
       case 'REJECTED': return 'Rejected';
       case 'APPROVED': return 'Approved';
@@ -383,6 +389,17 @@ const PurchaseOfficerDashboardPage = () => {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
+              <Link to="/purchase-officer/approved-vendor-selections">
+                <Button
+                  variant="primary"
+                  size="md"
+                  className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs gap-1.5 shadow-lg shadow-black/10 border-0"
+                >
+                  <HiBadgeCheck className="w-4 h-4 text-white" />
+                  <span>Approved Vendor Selections</span>
+                </Button>
+              </Link>
+
               <Link to="/purchase-officer/opportunities">
                 <Button
                   variant="primary"

@@ -34,6 +34,7 @@ import MyRequisitionsPage from './pages/staff/MyRequisitionsPage';
 import StaffPlaceholderPage from './pages/staff/StaffPlaceholderPage';
 import PurchaseOfficerDashboardPage from './pages/purchaseOfficer/PurchaseOfficerDashboardPage';
 import PurchaseOfficerRequisitionsPage from './pages/purchaseOfficer/PurchaseOfficerRequisitionsPage';
+import PurchaseOfficerApprovedSelectionsPage from './pages/purchaseOfficer/PurchaseOfficerApprovedSelectionsPage';
 import PurchaseOfficerPlaceholderPage from './pages/purchaseOfficer/PurchaseOfficerPlaceholderPage';
 import ProcurementCommitteeDashboardPage from './pages/committee/ProcurementCommitteeDashboardPage';
 import ProcurementCommitteePurchaseRequestsPage from './pages/committee/ProcurementCommitteePurchaseRequestsPage';
@@ -189,6 +190,18 @@ function App() {
                 <PurchaseOfficerPlaceholderPage path="/purchase-officer/quotations" />
               </PurchaseOfficerProtectedRoute>
             }
+          />
+          <Route
+            path="/purchase-officer/approved-vendor-selections"
+            element={
+              <PurchaseOfficerProtectedRoute>
+                <PurchaseOfficerApprovedSelectionsPage />
+              </PurchaseOfficerProtectedRoute>
+            }
+          />
+          <Route
+            path="/purchase-officer/selected-vendors"
+            element={<Navigate to="/purchase-officer/approved-vendor-selections" replace />}
           />
           <Route
             path="/purchase-officer/purchase-orders"

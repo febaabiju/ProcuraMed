@@ -2,6 +2,7 @@ import os
 import io
 import json
 import mimetypes
+from decimal import Decimal
 from rest_framework import viewsets, status
 from rest_framework.views import APIView
 from rest_framework.decorators import action
@@ -17,6 +18,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from accounts.models import AuditLog
 from accounts.permissions import IsDepartmentStaff, IsPurchaseOfficer, IsCommitteeMember, IsTechnicalOfficer
 from inventory.models import Delivery
+from vendors.models import Vendor
 from .models import (
     Requisition, Approval, QuotationRequest, RFQItem, RFQVendorInvitation,
     Quotation, QuotationItem, PurchaseOrder, PurchaseOrderItem,
@@ -80,7 +82,7 @@ class RequisitionViewSet(viewsets.ModelViewSet):
             return qs.filter(Q(assigned_technical_officer=user) | Q(requested_by=user))
 
         if is_po:
-            if self.action == 'review':
+            if self.action in ['review', 'approved_vendor_selections']:
                 return qs
             return qs.filter(
                 Q(assigned_purchase_officer=user) |
@@ -1311,6 +1313,76 @@ class RequisitionViewSet(viewsets.ModelViewSet):
             'evaluation': TechnicalEvaluationSerializer(eval_instance, context={'request': request}).data
         }, status=status.HTTP_200_OK)
 
+    @action(detail=False, methods=['get'], url_path='quotation-review-requests', permission_classes=[IsAuthenticated])
+    def quotation_review_requests(self, request):
+        """
+        Returns all purchase requests for which vendor quotations have been received
+        and are awaiting committee review or have vendor selections.
+        Only displays quotations associated with the relevant purchase request.
+        """
+        user = request.user
+        r_name = user.role.name.lower() if user.role else ''
+        is_committee = 'committee' in r_name
+        is_admin = user.is_superuser or user.is_staff or 'admin' in r_name
+
+        if not (is_committee or is_admin):
+            return Response(
+                {'detail': 'Only Procurement Committee members and Administrators can access this queue.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        qs = Requisition.objects.filter(
+            quotation_requests__quotations__isnull=False
+        ).distinct().select_related(
+            'department', 'requested_by', 'assigned_purchase_officer',
+            'assigned_committee_member', 'selected_vendor', 'selected_quotation', 'vendor_selected_by'
+        ).prefetch_related(
+            'items', 'quotation_requests__quotations__vendor', 'quotation_requests__quotations__items',
+            'technical_evaluations'
+        )
+
+        if not is_admin:
+            qs = qs.filter(Q(assigned_committee_member=user) | Q(assigned_committee_member__isnull=True))
+
+        serializer = RequisitionSerializer(qs.order_by('-updated_at'), many=True, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], url_path='approved-vendor-selections', permission_classes=[IsAuthenticated])
+    def approved_vendor_selections(self, request):
+        """
+        Returns all purchase requests where the Procurement Committee has confirmed vendor selection
+        and are awaiting Purchase Order creation (or have recently been ordered).
+        Accessible by Purchase Officers and Admins.
+        """
+        user = request.user
+        r_name = user.role.name.lower() if user.role else ''
+        is_po = ('purchase' in r_name or 'purchase officer' in r_name) and not ('staff' in r_name)
+        is_admin = user.is_superuser or user.is_staff or 'admin' in r_name
+
+        if not (is_po or is_admin):
+            return Response(
+                {'detail': 'Only Purchase Officers and Administrators can access approved vendor selections.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        qs = Requisition.objects.filter(
+            selected_vendor__isnull=False
+        ).select_related(
+            'department', 'requested_by', 'assigned_purchase_officer',
+            'selected_vendor', 'selected_quotation', 'vendor_selected_by'
+        ).prefetch_related(
+            'items', 'selected_quotation__items', 'purchase_orders'
+        ).order_by('-vendor_selected_at', '-updated_at')
+
+        status_param = request.query_params.get('status')
+        if status_param == 'AWAITING_PO':
+            qs = qs.filter(purchase_orders__isnull=True)
+        elif status_param == 'PO_CREATED':
+            qs = qs.filter(purchase_orders__isnull=False)
+
+        serializer = RequisitionSerializer(qs, many=True, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 class QuotationRequestViewSet(viewsets.ModelViewSet):
     queryset = QuotationRequest.objects.select_related(
@@ -2359,13 +2431,143 @@ class QuotationViewSet(viewsets.ModelViewSet):
             if rec_quote:
                 recommended_id = rec_quote.id
 
+        req = rfq.requisition
+        tech_eval_info = None
+        if req:
+            tech_eval_info = {
+                'requires_technical_evaluation': req.requires_technical_evaluation,
+                'technical_compliance': req.technical_compliance,
+                'technical_recommendation': req.technical_recommendation,
+                'technical_evaluation_remarks': req.technical_evaluation_remarks,
+                'technical_evaluated_at': req.technical_evaluated_at.isoformat() if req.technical_evaluated_at else None,
+                'evaluated_by_name': (req.assigned_technical_officer.get_full_name() or req.assigned_technical_officer.username) if req.assigned_technical_officer else None,
+            }
+
         return Response({
             'rfq': QuotationRequestSerializer(rfq, context={'request': request}).data,
+            'requisition': RequisitionSerializer(req, context={'request': request}).data if req else None,
             'quotations': quote_data,
             'quotations_count': len(quote_data),
             'lowest_price_quotation_id': lowest_price,
             'fastest_delivery_quotation_id': fastest_delivery,
             'recommended_quotation_id': recommended_id,
+            'selected_quotation_id': req.selected_quotation_id if req else None,
+            'selected_vendor_id': req.selected_vendor_id if req else None,
+            'technical_evaluation': tech_eval_info,
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='select-vendor', permission_classes=[IsAuthenticated])
+    def select_vendor(self, request, pk=None):
+        """
+        Procurement Committee confirms and finalizes vendor selection for a purchase request.
+        Requires justification/decision remarks.
+        Saves selected vendor and quotation on the Requisition, records decision-maker and timestamp.
+        Sets Requisition status to VENDOR_SELECTED.
+        Marks chosen quotation as SELECTED, and competing quotations as NOT_SELECTED without deleting them.
+        Closes RFQ, creates Approval record and AuditLog.
+        """
+        quotation = self.get_object()
+        user = request.user
+        role_name = user.role.name.lower() if user.role else ''
+        is_admin = user.is_superuser or user.is_staff or 'admin' in role_name
+        is_committee = 'committee' in role_name
+
+        if not (is_admin or is_committee):
+            return Response(
+                {'detail': 'Only authorized Procurement Committee members can make a vendor selection.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        rfq = quotation.quotation_request
+        req = rfq.requisition if rfq else None
+
+        if not req:
+            return Response(
+                {'detail': 'No purchase request linked to this quotation.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Scoping permission check: committee member must be assigned to this requisition (unless admin)
+        if not is_admin and req.assigned_committee_member_id and req.assigned_committee_member_id != user.id:
+            return Response(
+                {'detail': 'You can only select a vendor for purchase requests assigned to you.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Prevent modification if a Purchase Order has already been created for this requisition
+        if req.purchase_orders.exists() or req.status == Requisition.StatusChoices.PO_CREATED:
+            return Response(
+                {'detail': 'A Purchase Order has already been created for this purchase request. The vendor selection cannot be changed.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        remarks = (request.data.get('decision_remarks') or request.data.get('justification') or request.data.get('remarks') or '').strip()
+        if not remarks:
+            return Response(
+                {'decision_remarks': 'Decision remarks / justification are required to confirm vendor selection.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        with transaction.atomic():
+            # Mark winning quotation as SELECTED
+            quotation.status = Quotation.StatusChoices.SELECTED
+            quotation.is_recommended = True
+            quotation.recommended_by = user
+            quotation.recommended_at = timezone.now()
+            quotation.evaluation_remarks = remarks
+            quotation.save(update_fields=['status', 'is_recommended', 'recommended_by', 'recommended_at', 'evaluation_remarks', 'updated_at'])
+
+            # Mark all other competing quotations for this RFQ as NOT_SELECTED without deleting them
+            competing = Quotation.objects.filter(quotation_request=rfq).exclude(id=quotation.id)
+            competing.update(status=Quotation.StatusChoices.NOT_SELECTED, is_recommended=False)
+
+            # Update Requisition
+            req.selected_vendor = quotation.vendor
+            req.selected_quotation = quotation
+            req.vendor_selected_by = user
+            req.vendor_selected_at = timezone.now()
+            req.vendor_selection_remarks = remarks
+            req.status = Requisition.StatusChoices.VENDOR_SELECTED
+            req.save(update_fields=[
+                'selected_vendor', 'selected_quotation', 'vendor_selected_by',
+                'vendor_selected_at', 'vendor_selection_remarks', 'status', 'updated_at'
+            ])
+
+            # Close RFQ
+            if rfq.status != QuotationRequest.StatusChoices.CLOSED:
+                rfq.status = QuotationRequest.StatusChoices.CLOSED
+                rfq.save(update_fields=['status', 'updated_at'])
+
+            # Create Approval record
+            committee_name = user.get_full_name() or user.username
+            Approval.objects.create(
+                requisition=req,
+                approved_by=user,
+                stage='Procurement Committee Vendor Selection',
+                status=Approval.StatusChoices.APPROVED,
+                comments=(
+                    f"Vendor '{quotation.vendor.company_name}' selected by Committee Member @{user.username} "
+                    f"({committee_name}) with Quotation {quotation.quotation_number} "
+                    f"(Total: ₹{quotation.total_amount:,.2f}). Justification: {remarks}"
+                )
+            )
+
+            # Audit Log
+            AuditLog.objects.create(
+                user=user,
+                action='Vendor Selected',
+                module='Procurement Committee',
+                description=(
+                    f"Procurement Committee member @{user.username} confirmed vendor selection of '{quotation.vendor.company_name}' "
+                    f"(Quotation: {quotation.quotation_number}, Amount: ₹{quotation.total_amount}) "
+                    f"for Purchase Request {req.req_number}. Decision remarks: {remarks}"
+                )
+            )
+
+        return Response({
+            'message': f"Vendor '{quotation.vendor.company_name}' successfully selected and confirmed for {req.req_number}.",
+            'quotation': QuotationSerializer(quotation, context={'request': request}).data,
+            'requisition': RequisitionSerializer(req, context={'request': request}).data,
         }, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='accept', permission_classes=[IsAuthenticated])
@@ -2532,14 +2734,175 @@ class QuotationViewSet(viewsets.ModelViewSet):
 
 
 class PurchaseOrderViewSet(viewsets.ModelViewSet):
-    queryset = PurchaseOrder.objects.select_related('quotation', 'vendor', 'created_by').prefetch_related('items').all()
+    queryset = PurchaseOrder.objects.select_related('requisition', 'quotation', 'vendor', 'created_by').prefetch_related('items').all()
     serializer_class = PurchaseOrderSerializer
     permission_classes = [IsAuthenticated]
     filterset_class = PurchaseOrderFilter
     search_fields = ['po_number', 'terms_and_conditions']
 
-    def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+    def get_queryset(self):
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return PurchaseOrder.objects.none()
+
+        qs = PurchaseOrder.objects.select_related(
+            'requisition', 'requisition__department', 'quotation', 'vendor', 'created_by'
+        ).prefetch_related('items', 'requisition__items')
+
+        r_name = user.role.name.lower() if user.role else ''
+        is_admin = user.is_superuser or user.is_staff or 'admin' in r_name
+        is_po = ('purchase' in r_name or 'purchase officer' in r_name) and not ('staff' in r_name)
+        is_vendor = 'vendor' in r_name or hasattr(user, 'vendor_profile')
+        is_committee = 'committee' in r_name
+
+        if is_admin or is_po:
+            return qs.order_by('-created_at')
+        elif is_vendor:
+            from vendors.models import Vendor
+            vendor = getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+            if not vendor:
+                return PurchaseOrder.objects.none()
+            return qs.filter(vendor=vendor).order_by('-created_at')
+        elif is_committee:
+            return qs.filter(requisition__assigned_committee_member=user).order_by('-created_at')
+
+        return qs.filter(created_by=user).order_by('-created_at')
+
+    def create(self, request, *args, **kwargs):
+        user = request.user
+        r_name = user.role.name.lower() if user.role else ''
+        is_po = ('purchase' in r_name or 'purchase officer' in r_name) and not ('staff' in r_name)
+        is_admin = user.is_superuser or user.is_staff or 'admin' in r_name
+
+        if not (is_po or is_admin):
+            return Response(
+                {'detail': 'Only authorized Purchase Officers and Administrators can create purchase orders.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        requisition_id = request.data.get('requisition')
+        quotation_id = request.data.get('quotation')
+        vendor_id = request.data.get('vendor')
+        expected_delivery_date = request.data.get('expected_delivery_date')
+        terms_and_conditions = request.data.get('terms_and_conditions', '')
+        custom_total = request.data.get('total_amount')
+
+        req = None
+        if requisition_id:
+            try:
+                req = Requisition.objects.get(pk=requisition_id)
+            except Requisition.DoesNotExist:
+                return Response({'detail': f'Requisition {requisition_id} does not exist.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Prevent duplicate purchase orders for the same approved procurement decision
+            if PurchaseOrder.objects.filter(requisition=req).exists():
+                return Response(
+                    {'detail': f'A Purchase Order has already been created for purchase request {req.req_number}. Duplicate purchase orders are prevented.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Validate vendor selection
+            if req.selected_vendor_id:
+                if vendor_id and int(vendor_id) != req.selected_vendor_id:
+                    return Response(
+                        {'detail': f"Vendor must match the committee-approved vendor '{req.selected_vendor.company_name}'."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                vendor_id = req.selected_vendor_id
+
+            if req.selected_quotation_id:
+                if quotation_id and int(quotation_id) != req.selected_quotation_id:
+                    return Response(
+                        {'detail': f"Quotation must match the committee-approved quotation '{req.selected_quotation.quotation_number}'."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                quotation_id = req.selected_quotation_id
+
+        if not vendor_id:
+            return Response({'vendor': 'Vendor is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            vendor = Vendor.objects.get(pk=vendor_id)
+        except Vendor.DoesNotExist:
+            return Response({'vendor': 'Vendor does not exist.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        quote = None
+        if quotation_id:
+            try:
+                quote = Quotation.objects.get(pk=quotation_id)
+            except Quotation.DoesNotExist:
+                return Response({'quotation': 'Quotation does not exist.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Calculate or resolve total amount
+        if custom_total is not None and str(custom_total).strip():
+            total_amount = Decimal(str(custom_total))
+        elif quote and quote.total_amount:
+            total_amount = quote.total_amount
+        elif req and req.estimated_budget:
+            total_amount = req.estimated_budget
+        else:
+            total_amount = Decimal('0.00')
+
+        with transaction.atomic():
+            po = PurchaseOrder.objects.create(
+                requisition=req,
+                quotation=quote,
+                vendor=vendor,
+                created_by=user,
+                total_amount=total_amount,
+                expected_delivery_date=expected_delivery_date if expected_delivery_date else None,
+                terms_and_conditions=terms_and_conditions,
+                status=PurchaseOrder.StatusChoices.ISSUED
+            )
+
+            # Populate PO items from quotation items or requisition items
+            if quote and quote.items.exists():
+                for q_item in quote.items.all():
+                    PurchaseOrderItem.objects.create(
+                        purchase_order=po,
+                        item_name=q_item.item_name,
+                        specification=q_item.specification or '',
+                        quantity=q_item.quantity,
+                        unit_price=q_item.unit_price,
+                        total_price=q_item.total_price
+                    )
+            elif req and req.items.exists():
+                for r_item in req.items.all():
+                    unit_p = (total_amount / r_item.quantity) if r_item.quantity else total_amount
+                    PurchaseOrderItem.objects.create(
+                        purchase_order=po,
+                        item_name=r_item.item_name,
+                        specification=r_item.specifications or '',
+                        quantity=r_item.quantity,
+                        unit_price=unit_p,
+                        total_price=total_amount
+                    )
+
+            # Update Requisition status so that the same selection does not continue appearing as awaiting order creation
+            if req:
+                req.status = Requisition.StatusChoices.PO_CREATED
+                req.save(update_fields=['status', 'updated_at'])
+
+            # Update quotation status to ACCEPTED
+            if quote and quote.status != Quotation.StatusChoices.ACCEPTED:
+                quote.status = Quotation.StatusChoices.ACCEPTED
+                quote.save(update_fields=['status', 'updated_at'])
+
+            # Create AuditLog
+            AuditLog.objects.create(
+                user=user,
+                action='Purchase Order Created',
+                module='Purchase Officer',
+                description=(
+                    f"Purchase Officer @{user.username} created Purchase Order {po.po_number} "
+                    f"for Vendor '{vendor.company_name}' (Total: ₹{po.total_amount:,.2f}) "
+                    f"under PR {req.req_number if req else 'N/A'}."
+                )
+            )
+
+        serializer = self.get_serializer(po)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
 
 
 class DepartmentStaffDashboardView(APIView):

@@ -263,6 +263,8 @@ class Requisition(models.Model):
         REJECTED = 'REJECTED', 'Rejected'
         RFQ_ISSUED = 'RFQ_ISSUED', 'Awaiting Quotations'
         QUOTATIONS_RECEIVED = 'QUOTATIONS_RECEIVED', 'Quotations Received'
+        VENDOR_SELECTED = 'VENDOR_SELECTED', 'Vendor Selected'
+        PO_CREATED = 'PO_CREATED', 'PO Created'
         COMPLETED = 'COMPLETED', 'Completed'
         CANCELLED = 'CANCELLED', 'Cancelled'
 
@@ -365,6 +367,34 @@ class Requisition(models.Model):
     committee_assigned_at = models.DateTimeField(
         null=True, blank=True, verbose_name="Committee Assigned At"
     )
+    # Committee Vendor Selection Fields
+    selected_vendor = models.ForeignKey(
+        'vendors.Vendor',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='selected_for_requisitions',
+        verbose_name="Selected Vendor"
+    )
+    selected_quotation = models.ForeignKey(
+        'Quotation',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='selected_for_requisitions',
+        verbose_name="Selected Quotation"
+    )
+    vendor_selected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='requisition_vendor_selections',
+        verbose_name="Vendor Selected By"
+    )
+    vendor_selected_at = models.DateTimeField(null=True, blank=True, verbose_name="Vendor Selection Date")
+    vendor_selection_remarks = models.TextField(blank=True, null=True, verbose_name="Vendor Selection Remarks / Justification")
+
     submitted_at = models.DateTimeField(null=True, blank=True, verbose_name="Submitted At")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -1033,7 +1063,9 @@ class Quotation(models.Model):
         SUBMITTED = 'SUBMITTED', 'Received'
         UNDER_REVIEW = 'UNDER_REVIEW', 'Under Review'
         RECOMMENDED = 'RECOMMENDED', 'Recommended'
+        SELECTED = 'SELECTED', 'Selected'
         ACCEPTED = 'ACCEPTED', 'Accepted'
+        NOT_SELECTED = 'NOT_SELECTED', 'Not Selected'
         REJECTED = 'REJECTED', 'Rejected'
 
     quotation_number = models.CharField(max_length=50, unique=True, blank=True, verbose_name="Quotation Number")
@@ -1117,6 +1149,9 @@ class PurchaseOrder(models.Model):
         CANCELLED = 'CANCELLED', 'Cancelled'
 
     po_number = models.CharField(max_length=50, unique=True, blank=True, verbose_name="PO Number")
+    requisition = models.ForeignKey(
+        Requisition, on_delete=models.SET_NULL, null=True, blank=True, related_name='purchase_orders', verbose_name="Purchase Requisition"
+    )
     quotation = models.ForeignKey(
         Quotation, on_delete=models.SET_NULL, null=True, blank=True, related_name='purchase_orders'
     )
