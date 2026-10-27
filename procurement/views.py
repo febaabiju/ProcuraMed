@@ -3113,6 +3113,144 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(po)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['get'], url_path='procurement-history')
+    def procurement_history(self, request, pk=None):
+        po = self.get_object()
+        req = po.requisition
+        rfq = None
+        quotations_list = []
+        if req:
+            rfq = getattr(req, 'quotation_request', None) or QuotationRequest.objects.filter(requisition=req).first()
+            if rfq:
+                quotes = Quotation.objects.filter(quotation_request=rfq).select_related('vendor')
+                for q in quotes:
+                    quotations_list.append({
+                        'id': q.id,
+                        'quotation_number': q.quotation_number,
+                        'vendor_name': q.vendor.company_name if q.vendor else 'N/A',
+                        'total_amount': str(q.total_amount),
+                        'lead_time_days': q.lead_time_days,
+                        'status': q.status,
+                        'status_display': q.get_status_display(),
+                        'submitted_at': q.created_at.isoformat() if q.created_at else None,
+                    })
+
+        selected_vendor_data = {
+            'id': po.vendor.id if po.vendor else None,
+            'name': po.vendor.company_name if po.vendor else 'N/A',
+            'contact_person': po.vendor.contact_person if po.vendor else '',
+            'email': po.vendor.email if po.vendor else '',
+            'phone': po.vendor.phone if po.vendor else '',
+            'awarded_amount': str(po.total_amount),
+            'awarded_date': str(po.order_date) if po.order_date else None,
+            'selection_remarks': req.vendor_selection_remarks if req else '',
+        }
+
+        deliveries_list = []
+        for d in po.deliveries.select_related('recorded_by').prefetch_related('items', 'items__po_item').all():
+            items_info = [{
+                'id': it.id,
+                'item_name': it.po_item.item_name if it.po_item else '',
+                'quantity_delivered': it.quantity_delivered,
+                'quantity_accepted': it.quantity_accepted,
+                'quantity_rejected': it.quantity_rejected,
+                'condition': it.condition,
+                'condition_display': it.get_condition_display(),
+            } for it in d.items.all()]
+            deliveries_list.append({
+                'id': d.id,
+                'delivery_number': d.delivery_number,
+                'delivery_date': str(d.delivery_date) if d.delivery_date else None,
+                'status': d.status,
+                'status_display': d.get_status_display(),
+                'inspection_result': getattr(d, 'inspection_result', 'PASSED'),
+                'inspection_result_display': d.get_inspection_result_display(),
+                'inspection_notes': getattr(d, 'inspection_notes', ''),
+                'delivery_issue_details': getattr(d, 'delivery_issue_details', ''),
+                'remarks': d.remarks,
+                'recorded_by': (d.recorded_by.get_full_name() or d.recorded_by.username) if d.recorded_by else 'Purchase Officer',
+                'items': items_info,
+            })
+
+        invoices_list = []
+        payments_list = []
+        for inv in po.invoices.select_related('verified_by', 'recorded_by').prefetch_related('payments').all():
+            for p in inv.payments.all():
+                payments_list.append({
+                    'id': p.id,
+                    'payment_number': p.payment_number,
+                    'invoice_number': inv.invoice_number,
+                    'amount_paid': str(p.amount_paid),
+                    'payment_mode': p.get_payment_mode_display(),
+                    'transaction_reference': p.transaction_reference,
+                    'payment_date': str(p.payment_date) if p.payment_date else None,
+                    'notes': p.notes,
+                    'processed_by': (p.processed_by.get_full_name() or p.processed_by.username) if p.processed_by else 'Finance/Purchase Officer',
+                    'status': p.status,
+                })
+            invoices_list.append({
+                'id': inv.id,
+                'invoice_number': inv.invoice_number,
+                'invoice_date': str(inv.invoice_date) if inv.invoice_date else None,
+                'amount': str(inv.amount),
+                'tax_amount': str(inv.tax_amount),
+                'total_amount': str(inv.total_amount),
+                'verification_status': inv.verification_status,
+                'verification_status_display': inv.get_verification_status_display(),
+                'payment_status': inv.payment_status,
+                'payment_status_display': inv.get_payment_status_display(),
+                'verification_remarks': inv.verification_remarks,
+                'verified_by': (inv.verified_by.get_full_name() or inv.verified_by.username) if inv.verified_by else None,
+                'verified_at': inv.verified_at.isoformat() if inv.verified_at else None,
+                'total_amount_paid': str(inv.total_amount_paid),
+                'outstanding_balance': str(inv.outstanding_balance),
+                'remarks': inv.remarks,
+            })
+
+        history_data = {
+            'purchase_request': {
+                'id': req.id if req else None,
+                'req_number': req.req_number if req else 'N/A',
+                'title': req.title if req else 'N/A',
+                'department': req.department.name if (req and req.department) else 'N/A',
+                'priority': req.priority if req else 'N/A',
+                'status': req.status if req else 'N/A',
+                'status_display': req.get_status_display() if req else 'N/A',
+                'created_at': req.created_at.isoformat() if req else None,
+            },
+            'rfq': {
+                'id': rfq.id if rfq else None,
+                'rfq_number': rfq.rfq_number if rfq else 'N/A',
+                'quotations_received_count': len(quotations_list),
+                'quotations': quotations_list,
+            },
+            'selected_vendor': selected_vendor_data,
+            'purchase_order': {
+                'id': po.id,
+                'po_number': po.po_number,
+                'order_date': str(po.order_date) if po.order_date else None,
+                'total_amount': str(po.total_amount),
+                'status': po.status,
+                'status_display': po.get_status_display(),
+                'delivery_status': po.delivery_status,
+                'delivery_status_display': po.get_delivery_status_display(),
+            },
+            'deliveries': deliveries_list,
+            'invoices': invoices_list,
+            'payments': payments_list,
+            'summary': {
+                'procurement_stage': po.procurement_stage,
+                'procurement_stage_display': po.procurement_stage_display,
+                'total_po_amount': str(po.total_amount),
+                'total_invoiced_amount': str(po.total_invoiced_amount),
+                'total_paid_amount': str(po.total_paid_amount),
+                'outstanding_balance': str(po.outstanding_balance),
+                'is_completed': po.procurement_stage == 'COMPLETED',
+            }
+        }
+        return Response(history_data, status=status.HTTP_200_OK)
+
+
 
 
 
@@ -3487,6 +3625,13 @@ class PurchaseOfficerDashboardView(APIView):
                 'delivery_status_display': po.get_delivery_status_display(),
                 'vendor_dispatch_status': po.vendor_dispatch_status,
                 'vendor_dispatch_status_display': po.get_vendor_dispatch_status_display(),
+                'invoice_status': po.invoice_status,
+                'invoice_status_display': po.invoice_status_display,
+                'total_invoiced_amount': str(po.total_invoiced_amount),
+                'total_paid_amount': str(po.total_paid_amount),
+                'outstanding_balance': str(po.outstanding_balance),
+                'procurement_stage': po.procurement_stage,
+                'procurement_stage_display': po.procurement_stage_display,
                 'terms_and_conditions': po.terms_and_conditions,
             })
 

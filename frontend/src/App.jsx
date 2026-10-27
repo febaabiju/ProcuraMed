@@ -39,6 +39,7 @@ import PurchaseOfficerRequisitionsPage from './pages/purchaseOfficer/PurchaseOff
 import PurchaseOfficerApprovedSelectionsPage from './pages/purchaseOfficer/PurchaseOfficerApprovedSelectionsPage';
 import PurchaseOfficerPurchaseOrdersPage from './pages/purchaseOfficer/PurchaseOfficerPurchaseOrdersPage';
 import PurchaseOfficerDeliveriesPage from './pages/purchaseOfficer/PurchaseOfficerDeliveriesPage';
+import PurchaseOfficerInvoicesPage from './pages/purchaseOfficer/PurchaseOfficerInvoicesPage';
 import PurchaseOfficerPlaceholderPage from './pages/purchaseOfficer/PurchaseOfficerPlaceholderPage';
 import ProcurementCommitteeDashboardPage from './pages/committee/ProcurementCommitteeDashboardPage';
 import ProcurementCommitteePurchaseRequestsPage from './pages/committee/ProcurementCommitteePurchaseRequestsPage';
@@ -230,6 +231,18 @@ function App() {
                 <PurchaseOfficerDeliveriesPage />
               </PurchaseOfficerProtectedRoute>
             }
+          />
+          <Route
+            path="/purchase-officer/invoices"
+            element={
+              <PurchaseOfficerProtectedRoute>
+                <PurchaseOfficerInvoicesPage />
+              </PurchaseOfficerProtectedRoute>
+            }
+          />
+          <Route
+            path="/purchase-officer/payments"
+            element={<Navigate to="/purchase-officer/invoices" replace />}
           />
           <Route
             path="/purchase-officer/notifications"

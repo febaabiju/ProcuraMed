@@ -999,7 +999,15 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
     acknowledgment_status = serializers.CharField(read_only=True)
     delivery_status_display = serializers.CharField(source='get_delivery_status_display', read_only=True)
     vendor_dispatch_status_display = serializers.CharField(source='get_vendor_dispatch_status_display', read_only=True)
+    invoice_status = serializers.CharField(read_only=True)
+    invoice_status_display = serializers.CharField(read_only=True)
+    total_invoiced_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    total_paid_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    outstanding_balance = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    procurement_stage = serializers.CharField(read_only=True)
+    procurement_stage_display = serializers.CharField(read_only=True)
     delivery_history = serializers.SerializerMethodField()
+    invoices = serializers.SerializerMethodField()
     items = PurchaseOrderItemSerializer(many=True, read_only=True)
 
     class Meta:
@@ -1015,7 +1023,10 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             'vendor_dispatch_notes', 'vendor_dispatched_at', 'vendor_tracking_number',
             'is_acknowledged', 'acknowledged_at', 'acknowledged_by',
             'acknowledged_by_details', 'acknowledgment_notes', 'acknowledgment_status',
-            'portal_visible', 'delivery_history',
+            'portal_visible', 'delivery_history', 'invoices',
+            'invoice_status', 'invoice_status_display',
+            'total_invoiced_amount', 'total_paid_amount', 'outstanding_balance',
+            'procurement_stage', 'procurement_stage_display',
             'items', 'created_at', 'updated_at'
         ]
         read_only_fields = [
@@ -1023,7 +1034,11 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             'status_display', 'delivery_status_display', 'vendor_dispatch_status_display',
             'is_acknowledged', 'acknowledged_at', 'acknowledged_by',
             'acknowledged_by_details', 'acknowledgment_status', 'portal_visible',
-            'delivery_history', 'created_by', 'created_at', 'updated_at'
+            'delivery_history', 'invoices',
+            'invoice_status', 'invoice_status_display',
+            'total_invoiced_amount', 'total_paid_amount', 'outstanding_balance',
+            'procurement_stage', 'procurement_stage_display',
+            'created_by', 'created_at', 'updated_at'
         ]
 
     def to_representation(self, instance):
@@ -1067,6 +1082,47 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
                 'recorded_by_name': (d.recorded_by.get_full_name() or d.recorded_by.username) if d.recorded_by else 'Hospital Purchase Officer',
                 'created_at': d.created_at.isoformat() if d.created_at else None,
                 'items': items_data
+            })
+        return res
+
+    def get_invoices(self, obj):
+        invoices = obj.invoices.select_related('verified_by', 'recorded_by').prefetch_related('payments').all()
+        res = []
+        for inv in invoices:
+            payments_data = []
+            for p in inv.payments.all():
+                payments_data.append({
+                    'id': p.id,
+                    'payment_number': p.payment_number,
+                    'amount_paid': str(p.amount_paid),
+                    'payment_mode': p.payment_mode,
+                    'payment_mode_display': p.get_payment_mode_display(),
+                    'transaction_reference': p.transaction_reference,
+                    'payment_date': str(p.payment_date) if p.payment_date else None,
+                    'status': p.status,
+                    'notes': p.notes,
+                    'created_at': p.created_at.isoformat() if p.created_at else None,
+                })
+            res.append({
+                'id': inv.id,
+                'invoice_number': inv.invoice_number,
+                'invoice_date': str(inv.invoice_date) if inv.invoice_date else None,
+                'amount': str(inv.amount),
+                'tax_amount': str(inv.tax_amount),
+                'total_amount': str(inv.total_amount),
+                'verification_status': inv.verification_status,
+                'verification_status_display': inv.get_verification_status_display(),
+                'payment_status': inv.payment_status,
+                'payment_status_display': inv.get_payment_status_display(),
+                'verification_remarks': inv.verification_remarks,
+                'verified_by_name': (inv.verified_by.get_full_name() or inv.verified_by.username) if inv.verified_by else None,
+                'verified_at': inv.verified_at.isoformat() if inv.verified_at else None,
+                'recorded_by_name': (inv.recorded_by.get_full_name() or inv.recorded_by.username) if inv.recorded_by else None,
+                'remarks': inv.remarks,
+                'total_amount_paid': str(inv.total_amount_paid),
+                'outstanding_balance': str(inv.outstanding_balance),
+                'payments': payments_data,
+                'created_at': inv.created_at.isoformat() if inv.created_at else None,
             })
         return res
 

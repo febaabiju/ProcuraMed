@@ -18,7 +18,8 @@ import {
   HiMenu,
   HiX,
   HiRefresh,
-  HiBadgeCheck
+  HiBadgeCheck,
+  HiReceiptTax
 } from 'react-icons/hi';
 
 const PurchaseOfficerLayout = ({
@@ -56,6 +57,7 @@ const PurchaseOfficerLayout = ({
     { name: 'Purchase Orders', path: '/purchase-officer/purchase-orders', icon: HiShoppingBag },
     { name: 'Vendor Management', path: '/purchase-officer/vendors', icon: HiOfficeBuilding },
     { name: 'Delivery Management', path: '/purchase-officer/deliveries', icon: HiTruck },
+    { name: 'Invoice & Payment Tracking', path: '/purchase-officer/invoices', icon: HiReceiptTax },
     { name: 'Notifications', path: '/purchase-officer/notifications', icon: HiBell },
     { name: 'My Profile', path: '/purchase-officer/profile', icon: HiUserCircle },
   ];

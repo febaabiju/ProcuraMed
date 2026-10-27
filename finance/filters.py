@@ -7,10 +7,12 @@ class InvoiceFilter(django_filters.FilterSet):
     vendor = django_filters.NumberFilter(field_name='vendor__id')
     purchase_order = django_filters.NumberFilter(field_name='purchase_order__id')
     status = django_filters.CharFilter(lookup_expr='exact')
+    verification_status = django_filters.CharFilter(lookup_expr='exact')
+    payment_status = django_filters.CharFilter(lookup_expr='exact')
 
     class Meta:
         model = Invoice
-        fields = ['invoice_number', 'vendor', 'purchase_order', 'status']
+        fields = ['invoice_number', 'vendor', 'purchase_order', 'status', 'verification_status', 'payment_status']
 
 
 class PaymentFilter(django_filters.FilterSet):

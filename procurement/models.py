@@ -1,3 +1,4 @@
+from decimal import Decimal
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
@@ -1287,6 +1288,120 @@ class PurchaseOrder(models.Model):
             self.delivery_status = self.DeliveryStatusChoices.AWAITING_DELIVERY
             self.save(update_fields=['delivery_status', 'updated_at'])
             return self.delivery_status
+
+    @property
+    def total_invoiced_amount(self):
+        from django.db.models import Sum
+        total = self.invoices.exclude(
+            verification_status='REJECTED'
+        ).exclude(
+            status__in=['REJECTED', 'CANCELLED']
+        ).aggregate(total=Sum('total_amount'))['total'] or Decimal('0.00')
+        return total
+
+    @property
+    def total_paid_amount(self):
+        paid = sum((inv.total_amount_paid for inv in self.invoices.all()), Decimal('0.00'))
+        return paid
+
+    @property
+    def outstanding_balance(self):
+        return max(Decimal('0.00'), self.total_amount - self.total_paid_amount)
+
+    @property
+    def invoice_status(self):
+        invoices = self.invoices.all()
+        if not invoices.exists():
+            return 'NO_INVOICE'
+        non_rejected = invoices.exclude(verification_status='REJECTED').exclude(status__in=['REJECTED', 'CANCELLED'])
+        if not non_rejected.exists():
+            return 'REJECTED'
+        if non_rejected.filter(verification_status='PENDING_VERIFICATION').exists():
+            return 'PENDING_VERIFICATION'
+        total_paid = self.total_paid_amount
+        if total_paid >= self.total_amount and self.total_amount > 0:
+            return 'PAID'
+        elif total_paid > 0:
+            return 'PARTIALLY_PAID'
+        else:
+            return 'VERIFIED'
+
+    @property
+    def invoice_status_display(self):
+        mapping = {
+            'NO_INVOICE': 'No Invoice',
+            'PENDING_VERIFICATION': 'Pending Verification',
+            'VERIFIED': 'Verified',
+            'PARTIALLY_PAID': 'Partially Paid',
+            'PAID': 'Paid',
+            'REJECTED': 'Rejected',
+        }
+        return mapping.get(self.invoice_status, self.invoice_status)
+
+    @property
+    def procurement_stage(self):
+        """
+        Calculates the current stage of the procurement order:
+        - CANCELLED
+        - DELIVERY_ISSUE
+        - AWAITING_DELIVERY / PARTIALLY_DELIVERED
+        - AWAITING_INVOICE / INVOICE_PENDING_VERIFICATION / INVOICE_REJECTED
+        - PAYMENT_PENDING / PARTIALLY_PAID / COMPLETED
+        """
+        if self.status == self.StatusChoices.CANCELLED:
+            return 'CANCELLED'
+        if self.delivery_status == self.DeliveryStatusChoices.DELIVERY_ISSUE:
+            return 'DELIVERY_ISSUE'
+        if self.delivery_status in [self.DeliveryStatusChoices.AWAITING_DELIVERY, self.DeliveryStatusChoices.PARTIALLY_DELIVERED]:
+            return self.delivery_status
+        # If delivery is complete (DELIVERED)
+        inv_status = self.invoice_status
+        if inv_status == 'NO_INVOICE':
+            return 'AWAITING_INVOICE'
+        if inv_status == 'PENDING_VERIFICATION':
+            return 'INVOICE_PENDING_VERIFICATION'
+        if inv_status == 'REJECTED':
+            return 'INVOICE_REJECTED'
+
+        total_paid = self.total_paid_amount
+        if total_paid >= self.total_amount and self.total_amount > 0 and self.delivery_status == self.DeliveryStatusChoices.DELIVERED:
+            return 'COMPLETED'
+        elif total_paid > 0:
+            return 'PARTIALLY_PAID'
+        else:
+            return 'PAYMENT_PENDING'
+
+    @property
+    def procurement_stage_display(self):
+        mapping = {
+            'CANCELLED': 'Cancelled',
+            'DELIVERY_ISSUE': 'Delivery Issue',
+            'AWAITING_DELIVERY': 'Awaiting Delivery',
+            'PARTIALLY_DELIVERED': 'Partially Delivered',
+            'AWAITING_INVOICE': 'Awaiting Invoice',
+            'INVOICE_PENDING_VERIFICATION': 'Invoice Verification Pending',
+            'INVOICE_REJECTED': 'Invoice Rejected',
+            'PAYMENT_PENDING': 'Payment Pending',
+            'PARTIALLY_PAID': 'Partially Paid',
+            'COMPLETED': 'Completed',
+        }
+        return mapping.get(self.procurement_stage, self.procurement_stage)
+
+    def check_and_update_procurement_completion(self):
+        self.update_delivery_status()
+        is_delivered = (self.delivery_status == self.DeliveryStatusChoices.DELIVERED)
+        has_verified_invoices = self.invoices.filter(verification_status='VERIFIED').exists()
+        no_pending_invoices = not self.invoices.filter(verification_status='PENDING_VERIFICATION').exists()
+        is_fully_paid = (self.total_paid_amount >= self.total_amount and self.total_amount > 0)
+
+        if is_delivered and has_verified_invoices and no_pending_invoices and is_fully_paid:
+            self.status = self.StatusChoices.CLOSED
+            self.save(update_fields=['status', 'updated_at'])
+            if self.requisition and self.requisition.status != Requisition.StatusChoices.COMPLETED:
+                self.requisition.status = Requisition.StatusChoices.COMPLETED
+                self.requisition.save(update_fields=['status', 'updated_at'])
+            return True
+        return False
 
     def save(self, *args, **kwargs):
         if not self.po_number:
