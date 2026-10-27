@@ -3021,6 +3021,98 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(po)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['post'], url_path='update-dispatch-status', permission_classes=[IsAuthenticated])
+    def update_dispatch_status(self, request, pk=None):
+        po = self.get_object()
+        user = request.user
+
+        from vendors.models import Vendor
+        vendor = getattr(user, 'vendor_profile', None) or Vendor.objects.filter(user=user).first()
+        r_name = user.role.name.lower() if user.role else ''
+        is_vendor = 'vendor' in r_name or vendor is not None
+        is_admin = user.is_superuser or user.is_staff or 'admin' in r_name
+
+        if not (is_admin or (is_vendor and vendor and po.vendor_id == vendor.id)):
+            return Response(
+                {'detail': 'Only the assigned vendor can update the dispatch status for this purchase order.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        dispatch_status = request.data.get('dispatch_status') or request.data.get('status')
+        if not dispatch_status:
+            return Response(
+                {'detail': "Dispatch status is required ('PREPARING', 'DISPATCHED', or 'DELIVERED_TO_HOSPITAL')."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        normalized_status = str(dispatch_status).upper().replace(' ', '_').strip()
+        valid_statuses = [
+            PurchaseOrder.VendorDispatchChoices.PREPARING,
+            PurchaseOrder.VendorDispatchChoices.DISPATCHED,
+            PurchaseOrder.VendorDispatchChoices.DELIVERED_TO_HOSPITAL
+        ]
+
+        if normalized_status not in valid_statuses:
+            return Response(
+                {'detail': f"Invalid dispatch status '{dispatch_status}'. Valid choices are: PREPARING, DISPATCHED, DELIVERED_TO_HOSPITAL."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        tracking_number = request.data.get('tracking_number') or request.data.get('vendor_tracking_number')
+        notes = request.data.get('notes') or request.data.get('vendor_dispatch_notes')
+
+        with transaction.atomic():
+            po.vendor_dispatch_status = normalized_status
+            if tracking_number is not None:
+                po.vendor_tracking_number = str(tracking_number).strip()
+            if notes is not None:
+                po.vendor_dispatch_notes = str(notes).strip()
+            if normalized_status in [PurchaseOrder.VendorDispatchChoices.DISPATCHED, PurchaseOrder.VendorDispatchChoices.DELIVERED_TO_HOSPITAL] and not po.vendor_dispatched_at:
+                po.vendor_dispatched_at = timezone.now()
+
+            # Ensure hospital delivery status is strictly NOT updated by vendor
+            po.save(update_fields=[
+                'vendor_dispatch_status', 'vendor_tracking_number',
+                'vendor_dispatch_notes', 'vendor_dispatched_at', 'updated_at'
+            ])
+
+            AuditLog.objects.create(
+                user=user,
+                action='Dispatch Status Updated',
+                module='Vendor Portal',
+                description=(
+                    f"Vendor '{po.vendor.company_name}' updated dispatch status for PO {po.po_number} "
+                    f"to '{po.get_vendor_dispatch_status_display()}'. Tracking: {po.vendor_tracking_number or 'N/A'}."
+                )
+            )
+
+        serializer = self.get_serializer(po)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='record-delivery', permission_classes=[IsAuthenticated])
+    def record_delivery(self, request, pk=None):
+        user = request.user
+        r_name = user.role.name.lower() if user.role else ''
+        is_po = ('purchase' in r_name or 'purchase officer' in r_name) and not ('staff' in r_name)
+        is_admin = user.is_superuser or user.is_staff or 'admin' in r_name
+        if not (is_po or is_admin):
+            return Response(
+                {'detail': 'Only authorized Purchase Officers and Administrators can record deliveries.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            po = PurchaseOrder.objects.get(pk=pk)
+        except PurchaseOrder.DoesNotExist:
+            return Response({'detail': f'Purchase Order {pk} not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        from inventory.views import process_record_delivery
+        delivery, err_response = process_record_delivery(request.user, request.data, po=po)
+        if err_response:
+            return err_response
+        serializer = self.get_serializer(po)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 
 
@@ -3208,22 +3300,22 @@ class PurchaseOfficerDashboardView(APIView):
             pending_committee_review_count = assigned_reqs_base.filter(
                 status__in=['UNDER_REVIEW', Requisition.StatusChoices.PENDING_COMMITTEE_REVIEW]
             ).count()
-        approved_pos_count = PurchaseOrder.objects.filter(
-            quotation__quotation_request__requisition__in=assigned_reqs_base,
-            status__in=['ISSUED', 'PARTIALLY_DELIVERED', 'DELIVERED', 'INSPECTED', 'CLOSED']
+        if is_admin_or_super:
+            po_scope = Q()
+        else:
+            po_scope = Q(requisition__in=assigned_reqs_base) | Q(quotation__quotation_request__requisition__in=assigned_reqs_base) | Q(created_by=user)
+
+        approved_pos_count = PurchaseOrder.objects.filter(po_scope).count()
+        pending_deliveries_count = PurchaseOrder.objects.filter(
+            po_scope,
+            delivery_status__in=[
+                PurchaseOrder.DeliveryStatusChoices.AWAITING_DELIVERY,
+                PurchaseOrder.DeliveryStatusChoices.PARTIALLY_DELIVERED
+            ]
         ).count()
-        pending_deliveries_count = Delivery.objects.filter(
-            purchase_order__quotation__quotation_request__requisition__in=assigned_reqs_base,
-            status__in=['DISPATCHED', 'IN_TRANSIT']
-        ).count()
-        if pending_deliveries_count == 0:
-            pending_deliveries_count = PurchaseOrder.objects.filter(
-                quotation__quotation_request__requisition__in=assigned_reqs_base,
-                status__in=['ISSUED', 'PARTIALLY_DELIVERED']
-            ).count()
         completed_procurement_count = PurchaseOrder.objects.filter(
-            quotation__quotation_request__requisition__in=assigned_reqs_base,
-            status='CLOSED'
+            po_scope,
+            delivery_status=PurchaseOrder.DeliveryStatusChoices.DELIVERED
         ).count() + assigned_reqs_base.filter(status='COMPLETED').count()
 
         # 2. Pipeline Overview (8 stages)
@@ -3375,11 +3467,9 @@ class PurchaseOfficerDashboardView(APIView):
                 })
 
         # 6. Recent Purchase Orders (latest 10)
-        pos_qs = PurchaseOrder.objects.filter(
-            quotation__quotation_request__requisition__in=assigned_reqs_base
-        ).select_related(
+        pos_qs = PurchaseOrder.objects.filter(po_scope).select_related(
             'quotation', 'vendor', 'created_by'
-        ).order_by('-order_date')[:10]
+        ).order_by('-order_date', '-created_at')[:10]
         
         recent_pos = []
         for po in pos_qs:
@@ -3393,26 +3483,35 @@ class PurchaseOfficerDashboardView(APIView):
                 'expected_delivery_date': po.expected_delivery_date.isoformat() if po.expected_delivery_date else None,
                 'total_amount': str(po.total_amount) if po.total_amount is not None else '0.00',
                 'status': po.status,
+                'delivery_status': po.delivery_status,
+                'delivery_status_display': po.get_delivery_status_display(),
+                'vendor_dispatch_status': po.vendor_dispatch_status,
+                'vendor_dispatch_status_display': po.get_vendor_dispatch_status_display(),
                 'terms_and_conditions': po.terms_and_conditions,
             })
 
         # 7. Active Deliveries (latest 10)
-        deliveries_qs = Delivery.objects.filter(
-            purchase_order__quotation__quotation_request__requisition__in=assigned_reqs_base
-        ).select_related(
-            'purchase_order', 'vendor'
-        ).order_by('-created_at')[:10]
+        deliveries_filter = Q(purchase_order__in=PurchaseOrder.objects.filter(po_scope)) if not is_admin_or_super else Q()
+        deliveries_qs = Delivery.objects.filter(deliveries_filter).select_related(
+            'purchase_order', 'vendor', 'recorded_by'
+        ).prefetch_related('items', 'items__po_item').order_by('-created_at')[:10]
         
         active_deliveries = []
         for deliv in deliveries_qs:
+            items_summary = ", ".join([f"{it.po_item.item_name} ({it.quantity_delivered})" for it in deliv.items.all()[:3]])
             active_deliveries.append({
                 'id': deliv.id,
                 'delivery_number': deliv.delivery_number,
                 'po_number': deliv.purchase_order.po_number if deliv.purchase_order else 'N/A',
+                'po_id': deliv.purchase_order_id,
                 'vendor_name': deliv.vendor.company_name if deliv.vendor else 'N/A',
                 'delivery_date': deliv.delivery_date.isoformat() if deliv.delivery_date else None,
                 'status': deliv.status,
+                'status_display': deliv.get_status_display(),
+                'inspection_result': deliv.inspection_result,
+                'inspection_result_display': deliv.get_inspection_result_display(),
                 'tracking_number': deliv.tracking_number,
+                'items_summary': items_summary,
             })
 
         # 8. Notifications (latest 8)
@@ -3436,18 +3535,22 @@ class PurchaseOfficerDashboardView(APIView):
                 'created_at': log.created_at.isoformat(),
             })
 
+        stats_dict = {
+            'pending_requisitions': pending_requisitions_count,
+            'requisitions_under_processing': requisitions_under_processing_count,
+            'quotation_requests': quotation_requests_count,
+            'quotations_received': quotations_received_count,
+            'pending_committee_review': pending_committee_review_count,
+            'approved_purchase_orders': approved_pos_count,
+            'approved_pos': approved_pos_count,
+            'pending_deliveries': pending_deliveries_count,
+            'completed_procurement': completed_procurement_count,
+        }
+
         return Response({
             'user': user_info,
-            'stats': {
-                'pending_requisitions': pending_requisitions_count,
-                'requisitions_under_processing': requisitions_under_processing_count,
-                'quotation_requests': quotation_requests_count,
-                'quotations_received': quotations_received_count,
-                'pending_committee_review': pending_committee_review_count,
-                'approved_purchase_orders': approved_pos_count,
-                'pending_deliveries': pending_deliveries_count,
-                'completed_procurement': completed_procurement_count,
-            },
+            'stats': stats_dict,
+            'summary_cards': stats_dict,
             'pipeline': pipeline,
             'pending_requisitions': pending_requisitions,
             'recent_quotations': recent_quotations,

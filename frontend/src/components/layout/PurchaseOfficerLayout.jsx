@@ -55,7 +55,7 @@ const PurchaseOfficerLayout = ({
     { name: 'Approved Vendor Selections', path: '/purchase-officer/approved-vendor-selections', icon: HiBadgeCheck },
     { name: 'Purchase Orders', path: '/purchase-officer/purchase-orders', icon: HiShoppingBag },
     { name: 'Vendor Management', path: '/purchase-officer/vendors', icon: HiOfficeBuilding },
-    { name: 'Deliveries', path: '/purchase-officer/deliveries', icon: HiTruck },
+    { name: 'Delivery Management', path: '/purchase-officer/deliveries', icon: HiTruck },
     { name: 'Notifications', path: '/purchase-officer/notifications', icon: HiBell },
     { name: 'My Profile', path: '/purchase-officer/profile', icon: HiUserCircle },
   ];

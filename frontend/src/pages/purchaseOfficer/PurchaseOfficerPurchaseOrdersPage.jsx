@@ -651,10 +651,84 @@ const PurchaseOfficerPurchaseOrdersPage = () => {
                       </p>
                     </div>
                   )}
+
+                  {/* Delivery History Section */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-800 block">
+                        Hospital Delivery &amp; Inspection History
+                      </span>
+                      {selectedOrder.delivery_status && (
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          selectedOrder.delivery_status === 'DELIVERED'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : selectedOrder.delivery_status === 'PARTIALLY_DELIVERED'
+                            ? 'bg-blue-100 text-blue-800'
+                            : selectedOrder.delivery_status === 'DELIVERY_ISSUE'
+                            ? 'bg-rose-100 text-rose-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {selectedOrder.delivery_status_display || selectedOrder.delivery_status}
+                        </span>
+                      )}
+                    </div>
+
+                    {(!selectedOrder.delivery_history || selectedOrder.delivery_history.length === 0) ? (
+                      <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-center text-slate-400">
+                        <p className="text-xs">No delivery receipts recorded yet for this order.</p>
+                        <Link
+                          to="/purchase-officer/deliveries"
+                          className="text-[11px] text-violet-600 font-bold hover:underline inline-flex items-center gap-1 mt-1"
+                        >
+                          <HiTruck className="w-3.5 h-3.5" />
+                          <span>Go to Delivery Management to record hospital receipt</span>
+                        </Link>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {selectedOrder.delivery_history.map((batch, idx) => (
+                          <div key={batch.id || idx} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="font-mono font-bold text-slate-900">{batch.delivery_number}</span>
+                              <span className="text-[11px] text-slate-500">{formatDate(batch.delivery_date)}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600">
+                              <div>Tracking: <strong>{batch.tracking_number || 'N/A'}</strong></div>
+                              <div>
+                                Result: <strong className={batch.inspection_result === 'PASSED' ? 'text-emerald-700' : 'text-rose-700'}>
+                                  {batch.inspection_result_display || batch.inspection_result}
+                                </strong>
+                              </div>
+                            </div>
+                            {batch.inspection_notes && (
+                              <p className="text-[11px] text-slate-600 italic">"{batch.inspection_notes}"</p>
+                            )}
+                            <div className="space-y-1 pt-1 border-t border-slate-200">
+                              {(batch.items || []).map((it) => (
+                                <div key={it.id} className="flex items-center justify-between text-[11px]">
+                                  <span className="text-slate-800">{it.item_name}</span>
+                                  <span className="font-mono text-slate-600">
+                                    Qty: <strong>{it.quantity_delivered}</strong> ({it.condition_display || it.condition})
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Modal Footer */}
-                <div className="p-5 border-t border-slate-100 flex items-center justify-end bg-slate-50">
+                <div className="p-5 border-t border-slate-100 flex items-center justify-between bg-slate-50">
+                  <Link
+                    to="/purchase-officer/deliveries"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-violet-50 hover:bg-violet-100 text-violet-700 font-bold text-xs border border-violet-200 transition"
+                  >
+                    <HiTruck className="w-4 h-4 text-violet-600" />
+                    <span>Manage Deliveries</span>
+                  </Link>
                   <Button
                     variant="outline"
                     size="sm"

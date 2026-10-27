@@ -20,16 +20,25 @@ class InventoryItemSerializer(serializers.ModelSerializer):
 
 class DeliveryItemSerializer(serializers.ModelSerializer):
     po_item_details = PurchaseOrderItemSerializer(source='po_item', read_only=True)
+    item_name = serializers.CharField(source='po_item.item_name', read_only=True)
+    specification = serializers.CharField(source='po_item.specification', read_only=True)
 
     class Meta:
         model = DeliveryItem
-        fields = ['id', 'delivery', 'po_item', 'po_item_details', 'quantity_delivered', 'remarks', 'created_at', 'updated_at']
+        fields = [
+            'id', 'delivery', 'po_item', 'po_item_details', 'item_name', 'specification',
+            'quantity_delivered', 'quantity_accepted', 'quantity_rejected',
+            'condition', 'remarks', 'created_at', 'updated_at'
+        ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
 class DeliverySerializer(serializers.ModelSerializer):
     po_details = PurchaseOrderSerializer(source='purchase_order', read_only=True)
     vendor_details = VendorSerializer(source='vendor', read_only=True)
+    recorded_by_details = UserSerializer(source='recorded_by', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    inspection_result_display = serializers.CharField(source='get_inspection_result_display', read_only=True)
     items = DeliveryItemSerializer(many=True, read_only=True)
 
     class Meta:
@@ -37,9 +46,15 @@ class DeliverySerializer(serializers.ModelSerializer):
         fields = [
             'id', 'delivery_number', 'purchase_order', 'po_details',
             'vendor', 'vendor_details', 'tracking_number', 'delivery_date',
-            'status', 'remarks', 'items', 'created_at', 'updated_at'
+            'status', 'status_display', 'recorded_by', 'recorded_by_details',
+            'inspection_result', 'inspection_result_display', 'inspection_notes',
+            'delivery_issue_details', 'remarks', 'items', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'delivery_number', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'delivery_number', 'status_display', 'inspection_result_display',
+            'created_at', 'updated_at'
+        ]
+
 
 
 class VerificationSerializer(serializers.ModelSerializer):

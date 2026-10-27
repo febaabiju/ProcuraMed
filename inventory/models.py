@@ -32,10 +32,21 @@ class InventoryItem(models.Model):
 
 class Delivery(models.Model):
     class StatusChoices(models.TextChoices):
+        PREPARING = 'PREPARING', 'Preparing'
         DISPATCHED = 'DISPATCHED', 'Dispatched'
         IN_TRANSIT = 'IN_TRANSIT', 'In Transit'
+        DELIVERED_TO_HOSPITAL = 'DELIVERED_TO_HOSPITAL', 'Delivered to Hospital'
+        PARTIALLY_DELIVERED = 'PARTIALLY_DELIVERED', 'Partially Delivered'
         DELIVERED = 'DELIVERED', 'Delivered'
+        DELIVERY_ISSUE = 'DELIVERY_ISSUE', 'Delivery Issue'
         INSPECTED = 'INSPECTED', 'Inspected'
+
+    class InspectionChoices(models.TextChoices):
+        PASSED = 'PASSED', 'Passed / Satisfactory'
+        PARTIALLY_ACCEPTED = 'PARTIALLY_ACCEPTED', 'Partially Accepted'
+        DAMAGED = 'DAMAGED', 'Damaged'
+        REJECTED = 'REJECTED', 'Rejected'
+        DELIVERY_ISSUE = 'DELIVERY_ISSUE', 'Delivery Issue'
 
     delivery_number = models.CharField(max_length=50, unique=True, blank=True, verbose_name="Delivery Number")
     purchase_order = models.ForeignKey(
@@ -47,8 +58,17 @@ class Delivery(models.Model):
     tracking_number = models.CharField(max_length=100, blank=True, null=True)
     delivery_date = models.DateField(default=timezone.now)
     status = models.CharField(
-        max_length=20, choices=StatusChoices.choices, default=StatusChoices.DISPATCHED
+        max_length=30, choices=StatusChoices.choices, default=StatusChoices.DISPATCHED
     )
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='recorded_deliveries', verbose_name="Recorded By"
+    )
+    inspection_result = models.CharField(
+        max_length=30, choices=InspectionChoices.choices, default=InspectionChoices.PASSED
+    )
+    inspection_notes = models.TextField(blank=True, null=True)
+    delivery_issue_details = models.TextField(blank=True, null=True)
     remarks = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -71,6 +91,12 @@ class Delivery(models.Model):
 
 
 class DeliveryItem(models.Model):
+    class ConditionChoices(models.TextChoices):
+        SATISFACTORY = 'SATISFACTORY', 'Satisfactory'
+        DAMAGED = 'DAMAGED', 'Damaged'
+        REJECTED = 'REJECTED', 'Rejected'
+        INCOMPLETE = 'INCOMPLETE', 'Incomplete'
+
     delivery = models.ForeignKey(
         Delivery, on_delete=models.CASCADE, related_name='items'
     )
@@ -78,6 +104,11 @@ class DeliveryItem(models.Model):
         PurchaseOrderItem, on_delete=models.CASCADE, related_name='delivery_items'
     )
     quantity_delivered = models.PositiveIntegerField(default=1)
+    quantity_accepted = models.PositiveIntegerField(default=0)
+    quantity_rejected = models.PositiveIntegerField(default=0)
+    condition = models.CharField(
+        max_length=30, choices=ConditionChoices.choices, default=ConditionChoices.SATISFACTORY
+    )
     remarks = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -87,8 +118,21 @@ class DeliveryItem(models.Model):
         verbose_name = 'Delivery Item'
         verbose_name_plural = 'Delivery Items'
 
+    def save(self, *args, **kwargs):
+        # Auto-compute accepted and rejected if not set
+        if self.condition in [self.ConditionChoices.DAMAGED, self.ConditionChoices.REJECTED]:
+            if not self.quantity_rejected:
+                self.quantity_rejected = self.quantity_delivered
+            self.quantity_accepted = 0
+        else:
+            if not self.quantity_accepted:
+                self.quantity_accepted = self.quantity_delivered
+            self.quantity_rejected = 0
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        return f"{self.po_item.item_name} - Qty Delivered: {self.quantity_delivered}"
+        return f"{self.po_item.item_name} - Qty: {self.quantity_delivered} ({self.condition})"
+
 
 
 class Verification(models.Model):

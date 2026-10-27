@@ -1169,6 +1169,27 @@ class PurchaseOrder(models.Model):
     expected_delivery_date = models.DateField(null=True, blank=True)
     delivery_location = models.CharField(max_length=255, blank=True, null=True, verbose_name="Delivery Location")
     delivery_instructions = models.TextField(blank=True, null=True, verbose_name="Delivery Instructions")
+    class DeliveryStatusChoices(models.TextChoices):
+        AWAITING_DELIVERY = 'AWAITING_DELIVERY', 'Awaiting Delivery'
+        PARTIALLY_DELIVERED = 'PARTIALLY_DELIVERED', 'Partially Delivered'
+        DELIVERED = 'DELIVERED', 'Delivered'
+        DELIVERY_ISSUE = 'DELIVERY_ISSUE', 'Delivery Issue'
+
+    class VendorDispatchChoices(models.TextChoices):
+        PREPARING = 'PREPARING', 'Preparing'
+        DISPATCHED = 'DISPATCHED', 'Dispatched'
+        DELIVERED_TO_HOSPITAL = 'DELIVERED_TO_HOSPITAL', 'Delivered to Hospital'
+
+    delivery_status = models.CharField(
+        max_length=30, choices=DeliveryStatusChoices.choices, default=DeliveryStatusChoices.AWAITING_DELIVERY
+    )
+    vendor_dispatch_status = models.CharField(
+        max_length=30, choices=VendorDispatchChoices.choices, default=VendorDispatchChoices.PREPARING
+    )
+    vendor_dispatch_notes = models.TextField(blank=True, null=True, verbose_name="Vendor Dispatch Notes")
+    vendor_dispatched_at = models.DateTimeField(null=True, blank=True, verbose_name="Vendor Dispatched At")
+    vendor_tracking_number = models.CharField(max_length=100, blank=True, null=True, verbose_name="Vendor Tracking Number")
+
     terms_and_conditions = models.TextField(blank=True, null=True)
     status = models.CharField(
         max_length=30, choices=StatusChoices.choices, default=StatusChoices.ISSUED
@@ -1217,6 +1238,56 @@ class PurchaseOrder(models.Model):
             return self.terms_and_conditions
         return "Standard hospital receiving hours: Monday-Friday 08:00 - 16:00. Consignment note and invoice must accompany delivery."
 
+    def update_delivery_status(self):
+        """
+        Dynamically updates PO delivery status based on recorded hospital deliveries:
+        - DELIVERY_ISSUE if any item is DAMAGED or REJECTED
+        - DELIVERED if all ordered quantities have been received
+        - PARTIALLY_DELIVERED if some quantities have been received
+        - AWAITING_DELIVERY if no items have been received
+        """
+        deliveries = self.deliveries.all()
+        if not deliveries.exists():
+            self.delivery_status = self.DeliveryStatusChoices.AWAITING_DELIVERY
+            self.save(update_fields=['delivery_status', 'updated_at'])
+            return self.delivery_status
+
+        has_issue = False
+        for d in deliveries:
+            if d.status == 'DELIVERY_ISSUE' or getattr(d, 'inspection_result', '') in ['DELIVERY_ISSUE', 'REJECTED', 'DAMAGED']:
+                has_issue = True
+                break
+            for di in d.items.all():
+                if getattr(di, 'condition', '') in ['DAMAGED', 'REJECTED'] or getattr(di, 'quantity_rejected', 0) > 0:
+                    has_issue = True
+                    break
+            if has_issue:
+                break
+
+        if has_issue:
+            self.delivery_status = self.DeliveryStatusChoices.DELIVERY_ISSUE
+            self.save(update_fields=['delivery_status', 'updated_at'])
+            return self.delivery_status
+
+        total_ordered = sum(item.quantity for item in self.items.all())
+        total_received = sum(item.total_quantity_received for item in self.items.all())
+
+        if total_received >= total_ordered and total_ordered > 0:
+            self.delivery_status = self.DeliveryStatusChoices.DELIVERED
+            if self.status != self.StatusChoices.CLOSED:
+                self.status = self.StatusChoices.DELIVERED
+            self.save(update_fields=['delivery_status', 'status', 'updated_at'])
+            return self.delivery_status
+        elif total_received > 0:
+            self.delivery_status = self.DeliveryStatusChoices.PARTIALLY_DELIVERED
+            self.status = self.StatusChoices.PARTIALLY_DELIVERED
+            self.save(update_fields=['delivery_status', 'status', 'updated_at'])
+            return self.delivery_status
+        else:
+            self.delivery_status = self.DeliveryStatusChoices.AWAITING_DELIVERY
+            self.save(update_fields=['delivery_status', 'updated_at'])
+            return self.delivery_status
+
     def save(self, *args, **kwargs):
         if not self.po_number:
             year = timezone.now().strftime('%Y')
@@ -1246,6 +1317,18 @@ class PurchaseOrderItem(models.Model):
         verbose_name = 'Purchase Order Item'
         verbose_name_plural = 'Purchase Order Items'
 
+    @property
+    def total_quantity_received(self):
+        from django.db.models import Sum
+        delivered = self.delivery_items.aggregate(
+            total=Sum('quantity_delivered')
+        )['total'] or 0
+        return delivered
+
+    @property
+    def remaining_quantity(self):
+        return max(0, self.quantity - self.total_quantity_received)
+
     def save(self, *args, **kwargs):
         if self.quantity and self.unit_price:
             self.total_price = self.quantity * self.unit_price
@@ -1253,3 +1336,4 @@ class PurchaseOrderItem(models.Model):
 
     def __str__(self):
         return f"{self.item_name} (Qty: {self.quantity})"
+

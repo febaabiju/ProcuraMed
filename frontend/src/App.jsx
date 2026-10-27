@@ -27,6 +27,7 @@ import VendorSupplyCategoriesPage from './pages/vendor/VendorSupplyCategoriesPag
 import VendorOpportunitiesPage from './pages/vendor/VendorOpportunitiesPage';
 import VendorQuotationsPage from './pages/vendor/VendorQuotationsPage';
 import VendorPurchaseOrdersPage from './pages/vendor/VendorPurchaseOrdersPage';
+import VendorDeliveriesPage from './pages/vendor/VendorDeliveriesPage';
 import VendorChangePasswordPage from './pages/vendor/VendorChangePasswordPage';
 import VendorPlaceholderPage from './pages/vendor/VendorPlaceholderPage';
 import DepartmentStaffDashboardPage from './pages/staff/DepartmentStaffDashboardPage';
@@ -37,6 +38,7 @@ import PurchaseOfficerDashboardPage from './pages/purchaseOfficer/PurchaseOffice
 import PurchaseOfficerRequisitionsPage from './pages/purchaseOfficer/PurchaseOfficerRequisitionsPage';
 import PurchaseOfficerApprovedSelectionsPage from './pages/purchaseOfficer/PurchaseOfficerApprovedSelectionsPage';
 import PurchaseOfficerPurchaseOrdersPage from './pages/purchaseOfficer/PurchaseOfficerPurchaseOrdersPage';
+import PurchaseOfficerDeliveriesPage from './pages/purchaseOfficer/PurchaseOfficerDeliveriesPage';
 import PurchaseOfficerPlaceholderPage from './pages/purchaseOfficer/PurchaseOfficerPlaceholderPage';
 import ProcurementCommitteeDashboardPage from './pages/committee/ProcurementCommitteeDashboardPage';
 import ProcurementCommitteePurchaseRequestsPage from './pages/committee/ProcurementCommitteePurchaseRequestsPage';
@@ -225,7 +227,7 @@ function App() {
             path="/purchase-officer/deliveries"
             element={
               <PurchaseOfficerProtectedRoute>
-                <PurchaseOfficerPlaceholderPage path="/purchase-officer/deliveries" />
+                <PurchaseOfficerDeliveriesPage />
               </PurchaseOfficerProtectedRoute>
             }
           />
@@ -365,7 +367,7 @@ function App() {
             path="/vendor/deliveries"
             element={
               <VendorProtectedRoute>
-                <VendorPlaceholderPage path="/vendor/deliveries" />
+                <VendorDeliveriesPage />
               </VendorProtectedRoute>
             }
           />

@@ -964,10 +964,20 @@ class QuotationRequestSerializer(serializers.ModelSerializer):
 
 
 class PurchaseOrderItemSerializer(serializers.ModelSerializer):
+    total_quantity_received = serializers.IntegerField(read_only=True)
+    remaining_quantity = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = PurchaseOrderItem
-        fields = ['id', 'purchase_order', 'item_name', 'specification', 'quantity', 'unit_price', 'total_price', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'total_price', 'created_at', 'updated_at']
+        fields = [
+            'id', 'purchase_order', 'item_name', 'specification', 'quantity',
+            'total_quantity_received', 'remaining_quantity',
+            'unit_price', 'total_price', 'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'total_quantity_received', 'remaining_quantity', 'total_price',
+            'created_at', 'updated_at'
+        ]
 
 
 class PurchaseOrderSerializer(serializers.ModelSerializer):
@@ -987,7 +997,9 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
     acknowledged_by_details = UserSerializer(source='acknowledged_by', read_only=True)
     portal_visible = serializers.BooleanField(read_only=True)
     acknowledgment_status = serializers.CharField(read_only=True)
-    delivery_status = serializers.SerializerMethodField()
+    delivery_status_display = serializers.CharField(source='get_delivery_status_display', read_only=True)
+    vendor_dispatch_status_display = serializers.CharField(source='get_vendor_dispatch_status_display', read_only=True)
+    delivery_history = serializers.SerializerMethodField()
     items = PurchaseOrderItemSerializer(many=True, read_only=True)
 
     class Meta:
@@ -998,16 +1010,20 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             'created_by', 'created_by_details', 'total_amount', 'order_date',
             'expected_delivery_date', 'delivery_location', 'delivery_instructions',
             'terms_and_conditions', 'status', 'status_display',
+            'delivery_status', 'delivery_status_display',
+            'vendor_dispatch_status', 'vendor_dispatch_status_display',
+            'vendor_dispatch_notes', 'vendor_dispatched_at', 'vendor_tracking_number',
             'is_acknowledged', 'acknowledged_at', 'acknowledged_by',
             'acknowledged_by_details', 'acknowledgment_notes', 'acknowledgment_status',
-            'portal_visible', 'delivery_status',
+            'portal_visible', 'delivery_history',
             'items', 'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'po_number', 'requisition_details', 'quotation_details',
-            'status_display', 'is_acknowledged', 'acknowledged_at', 'acknowledged_by',
+            'status_display', 'delivery_status_display', 'vendor_dispatch_status_display',
+            'is_acknowledged', 'acknowledged_at', 'acknowledged_by',
             'acknowledged_by_details', 'acknowledgment_status', 'portal_visible',
-            'delivery_status', 'created_by', 'created_at', 'updated_at'
+            'delivery_history', 'created_by', 'created_at', 'updated_at'
         ]
 
     def to_representation(self, instance):
@@ -1018,15 +1034,42 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             data['delivery_instructions'] = instance.resolved_delivery_instructions
         return data
 
-    def get_delivery_status(self, obj):
-        latest_delivery = obj.deliveries.order_by('-created_at').first()
-        if latest_delivery:
-            return latest_delivery.get_status_display()
-        if obj.status == PurchaseOrder.StatusChoices.DELIVERED:
-            return 'Delivered'
-        if obj.status == PurchaseOrder.StatusChoices.PARTIALLY_DELIVERED:
-            return 'Partially Delivered'
-        return 'Pending Dispatch'
+    def get_delivery_history(self, obj):
+        deliveries = obj.deliveries.select_related('recorded_by').prefetch_related('items', 'items__po_item').order_by('-created_at')
+        res = []
+        for d in deliveries:
+            items_data = []
+            for it in d.items.all():
+                items_data.append({
+                    'id': it.id,
+                    'po_item_id': it.po_item_id,
+                    'item_name': it.po_item.item_name if it.po_item else '',
+                    'specification': it.po_item.specification if it.po_item else '',
+                    'quantity_delivered': it.quantity_delivered,
+                    'quantity_accepted': it.quantity_accepted,
+                    'quantity_rejected': it.quantity_rejected,
+                    'condition': it.condition,
+                    'condition_display': it.get_condition_display() if hasattr(it, 'get_condition_display') else it.condition,
+                    'remarks': it.remarks,
+                })
+            res.append({
+                'id': d.id,
+                'delivery_number': d.delivery_number,
+                'delivery_date': str(d.delivery_date) if d.delivery_date else None,
+                'tracking_number': d.tracking_number,
+                'status': d.status,
+                'status_display': d.get_status_display() if hasattr(d, 'get_status_display') else d.status,
+                'inspection_result': getattr(d, 'inspection_result', 'PASSED'),
+                'inspection_result_display': d.get_inspection_result_display() if hasattr(d, 'get_inspection_result_display') else getattr(d, 'inspection_result', 'Passed'),
+                'inspection_notes': getattr(d, 'inspection_notes', ''),
+                'delivery_issue_details': getattr(d, 'delivery_issue_details', ''),
+                'remarks': d.remarks,
+                'recorded_by_name': (d.recorded_by.get_full_name() or d.recorded_by.username) if d.recorded_by else 'Hospital Purchase Officer',
+                'created_at': d.created_at.isoformat() if d.created_at else None,
+                'items': items_data
+            })
+        return res
+
 
 
     def get_requisition_details(self, obj):

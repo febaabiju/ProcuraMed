@@ -660,8 +660,14 @@ class VendorDashboardView(APIView):
         quotations_submitted_count = Quotation.objects.filter(vendor=vendor).count()
         pending_quotations_count = Quotation.objects.filter(vendor=vendor, status__in=['SUBMITTED', 'UNDER_REVIEW']).count()
         approved_pos_count = PurchaseOrder.objects.filter(vendor=vendor).count()
-        pending_deliveries_count = Delivery.objects.filter(vendor=vendor, status__in=['DISPATCHED', 'IN_TRANSIT']).count()
-        completed_orders_count = PurchaseOrder.objects.filter(vendor=vendor, status__in=['CLOSED', 'DELIVERED']).count()
+        pending_deliveries_count = PurchaseOrder.objects.filter(
+            vendor=vendor,
+            delivery_status__in=['AWAITING_DELIVERY', 'PARTIALLY_DELIVERED']
+        ).count()
+        completed_orders_count = PurchaseOrder.objects.filter(
+            vendor=vendor,
+            delivery_status='DELIVERED'
+        ).count()
 
         stats = {
             'open_opportunities': open_opportunities_count,
@@ -740,6 +746,11 @@ class VendorDashboardView(APIView):
                 'delivery_location': po.delivery_location or po.resolved_delivery_location,
                 'total_amount': po.total_amount,
                 'status': po.status,
+                'delivery_status': po.delivery_status,
+                'delivery_status_display': po.get_delivery_status_display(),
+                'vendor_dispatch_status': po.vendor_dispatch_status,
+                'vendor_dispatch_status_display': po.get_vendor_dispatch_status_display(),
+                'vendor_tracking_number': po.vendor_tracking_number,
                 'is_acknowledged': po.is_acknowledged or po.status in ['ACKNOWLEDGED', 'VENDOR_ACKNOWLEDGED'],
                 'acknowledged_at': po.acknowledged_at,
             })
@@ -755,6 +766,9 @@ class VendorDashboardView(APIView):
                 'delivery_date': d.delivery_date,
                 'tracking_number': d.tracking_number,
                 'status': d.status,
+                'status_display': d.get_status_display(),
+                'inspection_result': d.inspection_result,
+                'inspection_result_display': d.get_inspection_result_display(),
             })
 
         # 7. Notifications
